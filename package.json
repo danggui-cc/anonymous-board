@@ -1,10 +1,13 @@
 {
   "name": "anonymous-board",
-  "version": "1.0.0",
-  "description": "完全匿名的问答 / 话题讨论墙（纯 Node.js，无需依赖）",
+  "version": "1.1.0",
+  "description": "完全匿名的问答 / 话题讨论墙（Node.js，本地用文件存储，CloudBase 部署时自动切云数据库）",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
+  },
+  "dependencies": {
+    "@cloudbase/node-sdk": "^2.10.2"
   },
   "engines": {
     "node": ">=14"

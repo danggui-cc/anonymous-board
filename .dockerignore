@@ -1,0 +1,11 @@
+data/
+*.log
+server.log
+node_modules/
+.git/
+.gitignore
+.workbuddy/
+.env
+.env.local
+README.md
+_test_*.js

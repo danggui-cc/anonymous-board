@@ -125,10 +125,38 @@ git push
 
 > 手动方式（不用 Blueprint）：New → Web Service → 连仓库 → Runtime 选 `Node` → **Build Command 留空**（零依赖不用装）→ Start Command 填 `node server.js` → 加环境变量 `ADMIN_KEY` → Create。
 
+⚠️ **Render 现在免费档也要绑外币卡验证**：如果你看到 "Add Card" 弹窗、没有 Visa/Mastercard，就走不通。请改用下面的 **路线 A-替代** 或 **路线 B/C**。
+
 ⚠️ **数据持久化坑**：Render 免费版磁盘是临时的，休眠 / 重启后 `data/data.json` 会被清空。两个办法：
 - 在 Render 给服务挂一个 **Persistent Disk**（如挂载到 `/data`），并把环境变量 `DATA_DIR` 设为 `/data`——`server.js` 第 22 行已支持读 `DATA_DIR`。
 - 或改用数据库（如 Render 自带的 PostgreSQL）。
 > 端口不用管：平台会用 `PORT` 环境变量注入，代码第 20 行 `process.env.PORT || 3000` 已处理。
+
+### 路线 A-替代：腾讯云 CloudBase / 华为云 / 阿里云容器服务（无外币卡）
+如果你没外币信用卡，用**国内云容器服务**最现实：已实名认证、给 HTTPS 域名、网络在国内、可挂载持久卷。
+
+这里以 **腾讯云 CloudBase 云托管** 为例（步骤最简单）：
+1. 打开 https://console.cloud.tencent.com/tcb → 用微信/QQ 登录 → 完成实名认证。
+2. 创建环境（选**按量计费**，有免费额度）。
+3. 进入「云托管」→ 新建服务 → 选择**自定义部署**（从 GitHub 仓库或本地代码包）。
+4. 来源选 GitHub，授权后选 `danggui-cc/anonymous-board` 仓库、分支 `main`。
+5. 构建方式选 **使用 Dockerfile**（仓库根目录已有 `Dockerfile`）。
+6. 服务配置：
+   - 端口：`3000`
+   - 环境变量：加 `ADMIN_KEY`（强口令）
+   - 高级设置 → 挂载**持久卷**到 `/data`（让 `data.json` 不丢；CloudBase 会按量计费，费用很低）
+7. 点「开始部署」，几分钟后得到 `https://xxx-xxx.gz.apigw.tencentcs.com` 之类的 HTTPS 地址。
+
+华为云、阿里云步骤类似：找「容器服务 / 函数计算 FC / 云托管」，上传代码或连 GitHub，启动命令 `node server.js`，端口 `3000`，挂载持久存储到 `/data`。
+
+### 路线 A-快速演示：Glitch（零门槛、不要卡、会休眠）
+如果你只想先拿到一个公网链接做演示，可以用 Glitch：
+1. 打开 https://glitch.com → 登录。
+2. 新建项目 → Import from GitHub → 填 `danggui-cc/anonymous-board`。
+3. Glitch 会自动读 `package.json` 并运行 `npm start`（即 `node server.js`）。
+4. 点 Share → Live Site，得到公开链接。
+
+⚠️ 缺点：免费实例 5 分钟没人访问会休眠，首次打开要等 5–10 秒唤醒；且磁盘可能随项目重启重置，**不适合正式长期使用**。
 
 ### 路线 B：国内云服务器 + 备案（要做微信小程序必须走这条）
 - 买一台**大陆地域**的云服务器（腾讯云 / 阿里云 ECS，约几十元/月）+ 一个已 **ICP 备案** 的域名（备案约 1–2 周）。

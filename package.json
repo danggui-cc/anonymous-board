@@ -1,0 +1,13 @@
+{
+  "name": "anonymous-board",
+  "version": "1.0.0",
+  "description": "完全匿名的问答 / 话题讨论墙（纯 Node.js，无需依赖）",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=14"
+  },
+  "license": "MIT"
+}

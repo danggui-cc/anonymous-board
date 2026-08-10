@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>欲言信箱</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📮</text></svg>" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site-header">
+      <div class="header-inner">
+        <div class="brand">
+          <span class="brand-emoji">📮</span>
+          <div>
+            <h1>欲言信箱</h1>
+            <p class="tagline">你所有未说出口的话，都值得被听见。</p>
+          </div>
+        </div>
+        <div class="header-actions">
+          <span id="adminBadge" class="admin-badge hidden">🛡 管理模式</span>
+          <button id="adminBtn" class="admin-btn">🛡 管理</button>
+          <div id="adminPanel" class="admin-panel hidden">
+            <input id="adminKeyInput" class="admin-input" type="password" placeholder="管理员口令" />
+            <button id="adminUnlock" class="ghost-btn small">解锁</button>
+            <button id="adminExit" class="ghost-btn small hidden">退出</button>
+          </div>
+          <div class="notif-wrap">
+            <button id="notifBtn" class="notif-btn" title="消息通知">🔔<span id="notifBadge" class="notif-badge hidden">0</span></button>
+            <div id="notifPanel" class="notif-panel hidden"></div>
+          </div>
+          <span id="modeBadge" class="mode-badge">…</span>
+        </div>
+      </div>
+  </header>
+
+  <main class="container">
+    <!-- 提问入口（收起态） -->
+    <section class="ask-cta card">
+      <div class="ask-cta-text">
+        <span class="ask-cta-title">有话想说？</span>
+        <span class="ask-cta-sub">匿名、自由、被温柔倾听 ✦ 你所有未说出口的话，都值得被听见。</span>
+      </div>
+      <button id="askOpenBtn" class="ask-open-btn">＋ 我要提问</button>
+    </section>
+
+    <!-- 提问弹窗 -->
+    <div id="askModal" class="modal hidden" aria-hidden="true">
+      <div class="modal-backdrop" data-close="1"></div>
+      <div class="modal-card composer" role="dialog" aria-modal="true" aria-label="我要提问">
+        <div class="modal-head">
+          <div class="composer-head">
+            <span class="anon-badge">匿名提问</span>
+            <span class="hint">不记录任何身份信息</span>
+          </div>
+          <button id="askCloseBtn" class="modal-close" title="关闭">✕</button>
+        </div>
+        <input id="titleInput" class="title-input" type="text" maxlength="80" placeholder="一句话概括你的问题（标题，可选）" />
+        <textarea id="contentInput" class="content-input" maxlength="4000" rows="4" placeholder="把你的想法、困惑、感受都写下来吧...这里只有温暖的倾听者。"></textarea>
+        <div class="composer-foot">
+          <div class="select-wrap">
+            <select id="categoryInput" class="category-select"></select>
+          </div>
+          <div class="composer-right">
+            <span id="charCount" class="char-count">0 / 4000</span>
+            <button id="postBtn" class="primary-btn">发布</button>
+          </div>
+        </div>
+        <p id="composerMsg" class="composer-msg"></p>
+        <div id="manageBox" class="manage-box hidden"></div>
+      </div>
+    </div>
+
+    <!-- 搜索 -->
+    <section class="toolbar">
+      <div class="search-wrap">
+        <span class="search-ico">🔍</span>
+        <input id="searchInput" class="search-input" type="text" placeholder="搜索关键词，关联到相关问题…" />
+      </div>
+    </section>
+
+    <!-- 卡片双列 -->
+    <section class="feed">
+      <div class="feed-head">
+        <div class="filter-all">
+          <button id="allBtn" class="pill all-pill">全部 <span class="caret">▾</span></button>
+          <div id="catDropdown" class="cat-dropdown hidden"></div>
+        </div>
+        <div class="feed-head-right">
+          <div class="sort-toggle">
+            <button id="sortTime" class="sort-btn active">时间</button>
+            <button id="sortHeat" class="sort-btn">热度</button>
+          </div>
+          <button id="refreshBtn" class="ghost-btn small">↻ 刷新</button>
+        </div>
+      </div>
+      <div id="questionList" class="question-list"></div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>💬手作人格IP成长营·欲言信箱</p>
+  </footer>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="identity.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

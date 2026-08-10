@@ -1,0 +1,21 @@
+# 运行时数据：含用户发布的提问/回复，不入库（换机器/重新克隆会重新生成空库）
+data/
+
+# 日志
+*.log
+server.log
+
+# 依赖（本项目零依赖，保留以防万一）
+node_modules/
+
+# 系统 / 编辑器产生的文件
+.DS_Store
+Thumbs.db
+*.swp
+
+# 项目本地记忆（不入库）
+.workbuddy/
+
+# 本地环境变量 / 密钥（如需本地覆盖 ADMIN_KEY 等，用 .env.local 并忽略）
+.env
+.env.local

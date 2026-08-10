@@ -1,0 +1,24 @@
+# Render.com 部署蓝图 —— 欲言信箱（匿名提问箱，纯 Node.js 零依赖）
+#
+# 用法：
+#   1. 把整个 anonymous-board 目录推送到 GitHub 仓库
+#   2. 在 Render 控制台 → New → Blueprint → 连接该仓库
+#   3. 创建时按提示为 ADMIN_KEY 设置一个强口令（用于清理违规内容）
+#   4. 部署完成后获得形如 https://yuyan-mailbox.onrender.com 的公开链接
+#
+# 说明：Render 会自动注入 $PORT，server.js 监听 process.env.PORT，无需手动指定。
+
+services:
+  - type: web
+    name: yuyan-mailbox
+    runtime: node
+    plan: free
+    branch: main
+    buildCommand: "node -e \"console.log('No build step needed')\""
+    startCommand: "node server.js"
+    healthCheckPath: "/"
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ADMIN_KEY
+        sync: false          # 部署后在 Render 控制台手动设置强口令

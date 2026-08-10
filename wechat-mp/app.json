@@ -1,0 +1,15 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/detail/detail"
+  ],
+  "window": {
+    "navigationBarBackgroundColor": "#6f9e86",
+    "navigationBarTitleText": "欲言信箱",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#eef3ef",
+    "enablePullDownRefresh": false
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

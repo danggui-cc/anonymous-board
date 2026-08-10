@@ -1,0 +1,130 @@
+<view class="page">
+  <!-- 头部 -->
+  <view class="header">
+    <view class="brand">
+      <text class="brand-emoji">📮</text>
+      <view class="brand-text">
+        <text class="brand-title">欲言信箱</text>
+        <text class="tagline">你所有未说出口的话，都值得被听见。</text>
+      </view>
+    </view>
+    <view class="header-actions">
+      <view class="mode-badge {{backendOk ? 'online' : 'local'}}">{{backendOk ? '● 共享模式' : '● 后端未连'}}</view>
+      <view class="notif-wrap">
+        <view class="notif-btn" bindtap="toggleNotif">🔔<view wx:if="{{notifUnread > 0}}" class="notif-badge">{{notifUnread > 99 ? '99+' : notifUnread}}</view></view>
+      </view>
+      <view wx:if="{{ADMIN}}" class="admin-badge">🛡 管理模式</view>
+      <view wx:else class="admin-btn" bindtap="toggleAdmin">🛡 管理</view>
+    </view>
+  </view>
+
+  <!-- 通知面板 -->
+  <view wx:if="{{showNotif}}" class="notif-mask" bindtap="toggleNotif"></view>
+  <view wx:if="{{showNotif}}" class="notif-panel">
+    <view wx:if="{{notifList.length}}">
+      <view wx:for="{{notifList}}" wx:key="replyId" class="notif-item" data-qid="{{item.qid}}" data-rid="{{item.replyId}}" bindtap="goNotif">
+        <view class="notif-kind">{{item.kind === 'question' ? '有人回复了你的提问' : '有人引用了你的留言'}}《{{item.qtitle}}》</view>
+        <view class="notif-text">{{item.text}}</view>
+        <view class="notif-time">{{item.timeStr}}{{item.seen ? '' : ' · 未读'}}</view>
+      </view>
+    </view>
+    <view wx:else class="notif-empty-wrap">
+      <view class="notif-empty">暂无新消息</view>
+      <view class="notif-empty-sub">有人回复你的提问、或引用你的留言时，会在这里提醒你 🔔</view>
+    </view>
+  </view>
+
+  <!-- 提问入口（收起态） -->
+  <view class="ask-cta card">
+    <view class="ask-cta-text">
+      <text class="ask-cta-title">有话想说？</text>
+      <text class="ask-cta-sub">匿名、自由、被温柔倾听 ✦ 你所有未说出口的话，都值得被听见。</text>
+    </view>
+    <view class="ask-open-btn" bindtap="openAsk">＋ 我要提问</view>
+  </view>
+
+  <!-- 搜索 -->
+  <view class="toolbar">
+    <view class="search-wrap">
+      <text class="search-ico">🔍</text>
+      <input class="search-input" placeholder="搜索关键词，关联到相关问题…" value="{{curQ}}" bindinput="onSearchInput" confirm-type="search" />
+    </view>
+  </view>
+
+  <!-- feed head -->
+  <view class="feed-head">
+    <view class="filter-all">
+      <view class="all-pill" bindtap="toggleCat">{{curCat}} <text class="caret">▾</text></view>
+      <view wx:if="{{showCatDropdown}}" class="cat-mask" bindtap="toggleCat"></view>
+      <view wx:if="{{showCatDropdown}}" class="cat-dropdown">
+        <view wx:for="{{categories}}" wx:key="*this" class="cat-opt {{curCat === item ? 'active' : ''}}" data-cat="{{item}}" bindtap="selectCat">{{item}}</view>
+      </view>
+    </view>
+    <view class="feed-head-right">
+      <view class="sort-toggle">
+        <view class="sort-btn {{curSort === 'time' ? 'active' : ''}}" bindtap="setSort" data-s="time">时间</view>
+        <view class="sort-btn {{curSort === 'heat' ? 'active' : ''}}" bindtap="setSort" data-s="heat">热度</view>
+      </view>
+      <view class="ghost-btn small" bindtap="loadQuestions">↻ 刷新</view>
+    </view>
+  </view>
+
+  <!-- 卡片双列 -->
+  <view wx:if="{{list.length}}" class="q-grid">
+    <view wx:for="{{list}}" wx:key="id" class="q-card" data-id="{{item.id}}" bindtap="goDetail">
+      <view class="q-card-author">
+        <view class="reply-avatar small" style="background:{{item.authorColor}}">{{item.authorAvatar}}</view>
+        <text class="q-author-name">{{item.authorName}}</text>
+      </view>
+      <view class="q-card-top">
+        <text class="post-topic">#{{item.category}}</text>
+        <view wx:if="{{ADMIN}}" class="card-del" data-id="{{item.id}}" catchtap="adminDeleteQuestion">🛡</view>
+      </view>
+      <view wx:if="{{item.title}}" class="q-card-title">{{item.title}}</view>
+      <text class="q-snippet">{{item.content}}</text>
+      <view class="q-card-foot">
+        <text>{{item.dateStr}}</text>
+        <text class="q-replies">💬 {{item.replyCount}} 回复</text>
+      </view>
+    </view>
+  </view>
+  <view wx:else class="empty-tip">{{backendOk ? '还没有相关问题，换个关键词或成为第一个发布的人 🌱' : '无法连接后端，请检查域名配置（见 README）'}}</view>
+
+  <!-- 管理员面板 -->
+  <view wx:if="{{adminPanelOpen}}" class="admin-mask" bindtap="toggleAdmin"></view>
+  <view wx:if="{{adminPanelOpen}}" class="admin-panel">
+    <input class="admin-input" password placeholder="管理员口令" value="{{adminKey}}" bindinput="onAdminKey" />
+    <view class="ghost-btn small" bindtap="adminUnlock">解锁</view>
+    <view wx:if="{{ADMIN}}" class="ghost-btn small" bindtap="adminExit">退出</view>
+  </view>
+
+  <!-- 提问弹窗 -->
+  <view wx:if="{{showAsk}}" class="modal">
+    <view class="modal-backdrop" bindtap="closeAsk"></view>
+    <view class="modal-card composer">
+      <view class="modal-head">
+        <view class="composer-head">
+          <text class="anon-badge">匿名提问</text>
+          <text class="hint">不记录任何身份信息</text>
+        </view>
+        <view class="modal-close" bindtap="closeAsk">✕</view>
+      </view>
+      <input class="title-input" placeholder="一句话概括你的问题（标题，可选）" value="{{titleInput}}" bindinput="onTitleInput" maxlength="80" />
+      <textarea class="content-input" placeholder="把你的想法、困惑、感受都写下来吧...这里只有温暖的倾听者。" value="{{contentInput}}" bindinput="onContentInput" maxlength="4000" />
+      <view class="composer-foot">
+        <picker class="select-wrap" range="{{categories}}" value="{{catIndex}}" bindchange="onCatChange">
+          <view class="category-select">#{{categories[catIndex]}} ▾</view>
+        </picker>
+        <view class="composer-right">
+          <text class="char-count">{{charCount}} / 4000</text>
+          <view class="primary-btn" bindtap="submitQuestion">发布</view>
+        </view>
+      </view>
+      <view wx:if="{{composerMsg}}" class="composer-msg {{composerMsgType}}">{{composerMsg}}</view>
+    </view>
+  </view>
+
+  <view class="site-footer">💬手作人格IP成长营·欲言信箱</view>
+</view>
+
+<view wx:if="{{toast}}" class="toast">{{toast}}</view>

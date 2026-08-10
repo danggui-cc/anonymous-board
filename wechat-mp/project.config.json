@@ -1,0 +1,21 @@
+{
+  "description": "欲言信箱 - 匿名提问小程序（前端，后端复用 server.js）",
+  "packOptions": {
+    "ignore": [],
+    "include": []
+  },
+  "setting": {
+    "urlCheck": false,
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "newFeature": true,
+    "bigPackageSizeSupport": true
+  },
+  "compileType": "miniprogram",
+  "libVersion": "3.5.0",
+  "appid": "touristappid",
+  "projectname": "yuyan-mailbox",
+  "condition": {}
+}

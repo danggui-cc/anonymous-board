@@ -4,302 +4,264 @@
  * 欲言信箱 —— 存储层
  *
  * 支持两种后端（自动选择）：
- *  1) PostgreSQL（腾讯云 CloudBase SQL 型数据库，推荐用于生产部署）
- *     - 当环境变量配置了 DATABASE_URL 时启用
- *     - 数据存于云端 PostgreSQL，所有浏览器/设备共享，重启/重部署不丢
- *     - CloudBase 云托管与 SQL 型数据库同环境，可直接通过内网连接串访问
+ *  1) 腾讯云 COS 对象存储（推荐用于生产部署，零成本、无需数据库密码）
+ *     - 当环境变量配置了 COS_SECRET_ID + COS_SECRET_KEY + COS_BUCKET 时启用
+ *     - 数据整体存于一个 COS 对象（默认 yuyan/data.json），所有浏览器/设备共享，
+ *       重启/重部署不丢；后端 server.js 通过内网直连 COS，前端无需直连、无需配 CORS。
+ *     - 读写模式：read（下载对象）→ modify（内存改）→ write（覆盖上传），
+ *       带 5 次重试缓解并发覆盖；数据量极小（KB 级），请求费可忽略。
  *  2) 本地文件模式（file，兜底 / 本地开发）
- *     - 数据写在 DATA_DIR/data.json，仅本机可见，重部署容器会丢
+ *     - 数据写在 DATA_DIR/data.json，仅本机可见，重部署容器会丢。
  *
  * 放弃的方案（仅作记录，勿回退）：
  *  - LeanCloud 国内版：已停止新用户注册、即将下线。
  *  - MongoDB Atlas（AWS 境外）：从 CloudBase 容器直连 *.mongodb.net 被网络层拦截
  *    （DNS 解析失败 + TLS 握手告警），实测不可用。
- *  - CloudBase 自带文档型数据库 / @cloudbase/node-sdk：云托管默认不注入凭据
+ *  - 腾讯云 TencentDB for MongoDB：可行但需付费 + 内网互联，用户选择免费 COS。
+ *  - CloudBase SQL 型数据库（PostgreSQL）：共享集群模式密码不可见、外网不可开，
+ *    无法直连用 pg 驱动，走不通。
+ *  - CloudBase 自带文档型数据库 / @cloudbase/node-sdk：云托管不注入凭据
  *    （TCB_ENV 等全 false），node-sdk 无法初始化，走不通。
- *  - 腾讯云 TencentDB for MongoDB：可行但需单独购买实例并配置内网互联；
- *    现在优先使用 CloudBase 自带的 PostgreSQL，零额外购买、同环境内网可达。
  */
 
 const fs = require('fs');
 const path = require('path');
-const { Pool } = require('pg');
+const COS = require('cos-nodejs-sdk-v5');
 
 // ---------- 模式选择 ----------
-const DATABASE_URL = process.env.DATABASE_URL || '';
+const COS_SECRET_ID = process.env.COS_SECRET_ID || '';
+const COS_SECRET_KEY = process.env.COS_SECRET_KEY || '';
+const COS_BUCKET = process.env.COS_BUCKET || '';
+const COS_REGION = process.env.COS_REGION || 'ap-guangzhou';
+const COS_KEY = process.env.COS_KEY || 'yuyan/data.json';
 const EXPLICIT_STORAGE = process.env.STORAGE || '';
 
 const MODE = (EXPLICIT_STORAGE === 'file')
   ? 'file'
-  : (DATABASE_URL ? 'pg' : 'file');
+  : (COS_SECRET_ID && COS_SECRET_KEY && COS_BUCKET ? 'cos' : 'file');
 
 // 文件模式路径
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
 
 // ===================================================================
-//  PostgreSQL 后端（腾讯云 CloudBase SQL 型数据库）
+//  腾讯云 COS 后端（零成本对象存储）
 // ===================================================================
 
-let _pool = null;
-let _connecting = null;
-
-function getPool() {
-  if (_pool) return _pool;
-  if (!DATABASE_URL) throw new Error('DATABASE_URL 未配置，无法使用 pg 模式');
-  _pool = new Pool({
-    connectionString: DATABASE_URL,
-    // CloudBase PostgreSQL 通常需要 SSL；若内网连接串已包含 sslmode 则这里不重复
-    // 额外加 5 秒连接超时，避免偶发抖动导致接口挂死
-    connectionTimeoutMillis: 5000,
-    idleTimeoutMillis: 30000,
-    max: 10,
+let _cos = null;
+function getCos() {
+  if (_cos) return _cos;
+  _cos = new COS({
+    SecretId: COS_SECRET_ID,
+    SecretKey: COS_SECRET_KEY,
   });
-  _pool.on('error', (err) => {
-    console.error('[pg] 连接池错误:', err && err.message);
+  return _cos;
+}
+
+function emptyData() {
+  return { questions: [], replies: [], users: [] };
+}
+
+// 下载对象并解析 JSON；对象不存在 / 解析失败 → 返回空结构
+function readRemote() {
+  return new Promise((resolve) => {
+    getCos().getObject({
+      Bucket: COS_BUCKET,
+      Region: COS_REGION,
+      Key: COS_KEY,
+    }, (err, data) => {
+      if (err) return resolve(emptyData());
+      try {
+        const text = data.Body && data.Body.toString ? data.Body.toString('utf8') : '{}';
+        const parsed = JSON.parse(text);
+        if (!parsed || typeof parsed !== 'object') return resolve(emptyData());
+        return resolve({
+          questions: Array.isArray(parsed.questions) ? parsed.questions : [],
+          replies: Array.isArray(parsed.replies) ? parsed.replies : [],
+          users: Array.isArray(parsed.users) ? parsed.users : [],
+        });
+      } catch {
+        return resolve(emptyData());
+      }
+    });
   });
-  return _pool;
 }
 
-async function query(sql, params) {
-  const pool = getPool();
-  const client = await pool.connect();
-  try {
-    const res = await client.query(sql, params);
-    return res;
-  } finally {
-    client.release();
+// 上传覆盖（整个对象替换，写操作原子）
+function writeRemote(obj) {
+  const body = JSON.stringify(obj, null, 2);
+  return new Promise((resolve, reject) => {
+    getCos().putObject({
+      Bucket: COS_BUCKET,
+      Region: COS_REGION,
+      Key: COS_KEY,
+      Body: body,
+      ContentType: 'application/json',
+    }, (err, data) => {
+      if (err) return reject(err);
+      resolve(data);
+    });
+  });
+}
+
+// 读 → 改(d 由 mutate 原地修改) → 写；失败重试最多 5 次，缓解并发覆盖
+async function withData(mutate) {
+  let result;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const data = await readRemote();
+    result = await mutate(data);
+    try {
+      await writeRemote(data);
+      return result;
+    } catch (e) {
+      if (attempt === 4) throw e;
+      await new Promise((r) => setTimeout(r, 120));
+    }
   }
+  return result;
 }
 
-async function ensureTables() {
-  await query(`
-    CREATE TABLE IF NOT EXISTS questions (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL DEFAULT '',
-      content TEXT NOT NULL DEFAULT '',
-      category TEXT NOT NULL DEFAULT '其他',
-      createdAt BIGINT NOT NULL,
-      deleteToken TEXT NOT NULL DEFAULT '',
-      author JSONB,
-      ownerId TEXT NOT NULL DEFAULT '',
-      featured BOOLEAN NOT NULL DEFAULT FALSE
-    );
-  `);
-  await query(`
-    CREATE INDEX IF NOT EXISTS idx_questions_createdAt ON questions (createdAt DESC);
-  `);
-  await query(`
-    CREATE INDEX IF NOT EXISTS idx_questions_category ON questions (category);
-  `);
-  await query(`
-    CREATE INDEX IF NOT EXISTS idx_questions_ownerId ON questions (ownerId);
-  `);
-
-  await query(`
-    CREATE TABLE IF NOT EXISTS replies (
-      id TEXT PRIMARY KEY,
-      questionId TEXT NOT NULL,
-      content TEXT NOT NULL DEFAULT '',
-      createdAt BIGINT NOT NULL,
-      deleteToken TEXT NOT NULL DEFAULT '',
-      quoteId TEXT,
-      rootId TEXT,
-      author JSONB,
-      ownerId TEXT NOT NULL DEFAULT ''
-    );
-  `);
-  await query(`
-    CREATE INDEX IF NOT EXISTS idx_replies_questionId ON replies (questionId);
-  `);
-  await query(`
-    CREATE INDEX IF NOT EXISTS idx_replies_createdAt ON replies (createdAt ASC);
-  `);
-  await query(`
-    CREATE INDEX IF NOT EXISTS idx_replies_ownerId ON replies (ownerId);
-  `);
-
-  await query(`
-    CREATE TABLE IF NOT EXISTS accounts (
-      id TEXT PRIMARY KEY,
-      salt TEXT NOT NULL,
-      pwdHash TEXT NOT NULL
-    );
-  `);
-}
-
-function parseAuthor(authorRaw) {
-  if (!authorRaw) return null;
-  if (typeof authorRaw === 'string') {
-    try { authorRaw = JSON.parse(authorRaw); } catch { return null; }
-  }
-  if (typeof authorRaw !== 'object') return null;
-  if (typeof authorRaw.nickname !== 'string' || !authorRaw.nickname.trim()) return null;
-  return {
-    nickname: authorRaw.nickname.slice(0, 24),
-    avatar: typeof authorRaw.avatar === 'string' ? authorRaw.avatar.slice(0, 8) : '',
-    color: typeof authorRaw.color === 'string' ? authorRaw.color.slice(0, 9) : '',
-  };
-}
-
-function mapQuestion(row) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    title: row.title || '',
-    content: row.content || '',
-    category: row.category || '其他',
-    createdAt: Number(row.createdat || row.createdAt) || 0,
-    deleteToken: row.deletetoken || row.deleteToken || '',
-    author: parseAuthor(row.author),
-    ownerId: row.ownerid || row.ownerId || '',
-    featured: !!row.featured,
-  };
-}
-
-function mapReply(row) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    questionId: row.questionid || row.questionId,
-    content: row.content || '',
-    createdAt: Number(row.createdat || row.createdAt) || 0,
-    quoteId: row.quoteid || row.quoteId || null,
-    rootId: row.rootid || row.rootId || null,
-    author: parseAuthor(row.author),
-    deleteToken: row.deletetoken || row.deleteToken || '',
-    ownerId: row.ownerid || row.ownerId || '',
-  };
-}
-
-const pgStore = {
+const cosStore = {
   async init() {
     try {
-      await ensureTables();
-      console.log('[storage] PostgreSQL 连接成功，表已就绪（模式 pg）');
+      await new Promise((resolve, reject) => {
+        getCos().headBucket({ Bucket: COS_BUCKET, Region: COS_REGION }, (err, data) => {
+          if (err) return reject(err);
+          resolve(data);
+        });
+      });
+      console.log('[storage] COS 连接成功（模式 cos）');
     } catch (e) {
-      console.error('[storage] PostgreSQL 初始化失败（仅告警，进程继续）:', e && e.message);
-      throw e; // 让 server.js 记录日志，但不退出
+      console.error('[storage] COS 探活失败（仅告警，进程继续）:', e && e.message);
     }
   },
   async listQuestions() {
-    const res = await query('SELECT * FROM questions ORDER BY createdAt DESC');
-    return res.rows.map(mapQuestion);
+    const d = await readRemote();
+    return d.questions.slice().sort((a, b) => b.createdAt - a.createdAt);
   },
   async getQuestion(id) {
-    const res = await query('SELECT * FROM questions WHERE id = $1', [id]);
-    return mapQuestion(res.rows[0]);
+    const d = await readRemote();
+    return d.questions.find((q) => q.id === id) || null;
   },
   async createQuestion(q) {
-    await query(
-      `INSERT INTO questions (id, title, content, category, createdAt, deleteToken, author, ownerId, featured)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [
-        q.id, q.title || '', q.content || '', q.category || '其他', q.createdAt || Date.now(),
-        q.deleteToken || '', q.author ? JSON.stringify(q.author) : null,
-        q.ownerId || '', !!q.featured,
-      ]
-    );
+    await withData((d) => { d.questions.push(q); });
     return q;
   },
   async deleteQuestion(id, token) {
-    const qres = await query('SELECT * FROM questions WHERE id = $1', [id]);
-    if (!qres.rows[0]) return { ok: false, code: 404 };
-    const q = mapQuestion(qres.rows[0]);
-    if (q.deleteToken !== token) return { ok: false, code: 403 };
-    await query('DELETE FROM replies WHERE questionId = $1', [id]);
-    await query('DELETE FROM questions WHERE id = $1', [id]);
-    return { ok: true };
+    let res = { ok: false, code: 404 };
+    await withData((d) => {
+      const q = d.questions.find((x) => x.id === id);
+      if (!q) { res = { ok: false, code: 404 }; return; }
+      if (q.deleteToken !== token) { res = { ok: false, code: 403 }; return; }
+      d.questions = d.questions.filter((x) => x.id !== id);
+      d.replies = d.replies.filter((x) => x.questionId !== id);
+      res = { ok: true };
+    });
+    return res;
   },
   async adminDeleteQuestion(id) {
-    const qres = await query('SELECT * FROM questions WHERE id = $1', [id]);
-    if (!qres.rows[0]) return { ok: false, code: 404 };
-    await query('DELETE FROM replies WHERE questionId = $1', [id]);
-    await query('DELETE FROM questions WHERE id = $1', [id]);
-    return { ok: true };
+    let res = { ok: false, code: 404 };
+    await withData((d) => {
+      const q = d.questions.find((x) => x.id === id);
+      if (!q) { res = { ok: false, code: 404 }; return; }
+      d.questions = d.questions.filter((x) => x.id !== id);
+      d.replies = d.replies.filter((x) => x.questionId !== id);
+      res = { ok: true };
+    });
+    return res;
   },
   async listReplies(qid) {
-    const res = await query('SELECT * FROM replies WHERE questionId = $1 ORDER BY createdAt ASC', [qid]);
-    return res.rows.map(mapReply);
+    const d = await readRemote();
+    return d.replies.filter((r) => r.questionId === qid).sort((a, b) => a.createdAt - b.createdAt);
   },
   async createReply(r) {
-    await query(
-      `INSERT INTO replies (id, questionId, content, createdAt, deleteToken, quoteId, rootId, author, ownerId)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [
-        r.id, r.questionId, r.content || '', r.createdAt || Date.now(),
-        r.deleteToken || '', r.quoteId || null, r.rootId || null,
-        r.author ? JSON.stringify(r.author) : null, r.ownerId || '',
-      ]
-    );
+    await withData((d) => { d.replies.push(r); });
     return r;
   },
   async deleteReply(id, token) {
-    const rres = await query('SELECT * FROM replies WHERE id = $1', [id]);
-    if (!rres.rows[0]) return { ok: false, code: 404 };
-    const r = mapReply(rres.rows[0]);
-    if (r.deleteToken !== token) return { ok: false, code: 403 };
-    await query('DELETE FROM replies WHERE id = $1', [id]);
-    return { ok: true };
+    let res = { ok: false, code: 404 };
+    await withData((d) => {
+      const r = d.replies.find((x) => x.id === id);
+      if (!r) { res = { ok: false, code: 404 }; return; }
+      if (r.deleteToken !== token) { res = { ok: false, code: 403 }; return; }
+      d.replies = d.replies.filter((x) => x.id !== id);
+      res = { ok: true };
+    });
+    return res;
   },
   async adminDeleteReply(id) {
-    const rres = await query('SELECT * FROM replies WHERE id = $1', [id]);
-    if (!rres.rows[0]) return { ok: false, code: 404 };
-    await query('DELETE FROM replies WHERE id = $1', [id]);
-    return { ok: true };
+    let res = { ok: false, code: 404 };
+    await withData((d) => {
+      const r = d.replies.find((x) => x.id === id);
+      if (!r) { res = { ok: false, code: 404 }; return; }
+      d.replies = d.replies.filter((x) => x.id !== id);
+      res = { ok: true };
+    });
+    return res;
   },
   async setFeatured(id, val) {
-    const qres = await query('SELECT * FROM questions WHERE id = $1', [id]);
-    if (!qres.rows[0]) return { ok: false, code: 404 };
-    await query('UPDATE questions SET featured = $1 WHERE id = $2', [!!val, id]);
-    return { ok: true };
+    let res = { ok: false, code: 404 };
+    await withData((d) => {
+      const q = d.questions.find((x) => x.id === id);
+      if (!q) { res = { ok: false, code: 404 }; return; }
+      q.featured = !!val;
+      res = { ok: true };
+    });
+    return res;
   },
   async replyCounts() {
-    const res = await query('SELECT questionId, COUNT(*) AS cnt FROM replies GROUP BY questionId');
+    const d = await readRemote();
     const counts = {};
-    for (const row of res.rows) {
-      if (row.questionid) counts[row.questionid] = Number(row.cnt) || 0;
+    for (const r of d.replies) {
+      if (r.questionId) counts[r.questionId] = (counts[r.questionId] || 0) + 1;
     }
     return counts;
   },
   async createUser(u) {
-    const res = await query('SELECT id FROM accounts WHERE id = $1', [u.id]);
-    if (res.rows[0]) return { existed: true };
-    await query('INSERT INTO accounts (id, salt, pwdHash) VALUES ($1, $2, $3)', [u.id, u.salt, u.pwdHash]);
-    return { existed: false };
+    let existed = false;
+    await withData((d) => {
+      const existing = d.users.find((x) => x.id === u.id);
+      if (existing) { existed = true; return; }
+      d.users.push(u);
+    });
+    return { existed };
   },
   async getUserSalt(id) {
-    const res = await query('SELECT salt FROM accounts WHERE id = $1', [id]);
-    return res.rows[0] ? res.rows[0].salt : null;
+    const d = await readRemote();
+    const a = d.users.find((x) => x.id === id);
+    return a ? a.salt : null;
   },
   async verifyUser(id, pwdHash) {
-    const res = await query('SELECT pwdHash FROM accounts WHERE id = $1', [id]);
-    return !!res.rows[0] && res.rows[0].pwdhash === pwdHash;
+    const d = await readRemote();
+    const a = d.users.find((x) => x.id === id);
+    return !!a && a.pwdHash === pwdHash;
   },
   async listMyQuestions(ownerId) {
-    const res = await query('SELECT * FROM questions WHERE ownerId = $1 ORDER BY createdAt DESC', [ownerId]);
-    return res.rows.map(mapQuestion);
+    const d = await readRemote();
+    return d.questions.filter((q) => q.ownerId === ownerId)
+      .sort((a, b) => b.createdAt - a.createdAt);
   },
   async listMyReplies(ownerId) {
-    const res = await query('SELECT * FROM replies WHERE ownerId = $1 ORDER BY createdAt DESC', [ownerId]);
-    return res.rows.map(mapReply);
+    const d = await readRemote();
+    return d.replies.filter((r) => r.ownerId === ownerId)
+      .sort((a, b) => b.createdAt - a.createdAt);
   },
   async debug() {
     const info = {
       MODE, EXPLICIT_STORAGE, mode: MODE,
-      pgConfigured: !!DATABASE_URL,
+      cosConfigured: !!(COS_SECRET_ID && COS_SECRET_KEY && COS_BUCKET),
+      cosBucket: COS_BUCKET, cosRegion: COS_REGION, cosKey: COS_KEY,
     };
-    if (MODE === 'pg') {
+    if (MODE === 'cos') {
       try {
-        const res = await query('SELECT COUNT(*) AS q FROM questions');
-        const rres = await query('SELECT COUNT(*) AS c FROM replies');
-        info.pg = {
+        const d = await readRemote();
+        info.cos = {
           ok: true,
-          questionCount: Number(res.rows[0].q) || 0,
-          replyCount: Number(rres.rows[0].c) || 0,
+          questionCount: d.questions.length,
+          replyCount: d.replies.length,
         };
       } catch (e) {
-        info.pg = { ok: false, name: e && e.name, message: e && e.message };
+        info.cos = { ok: false, message: e && e.message };
       }
     }
     return info;
@@ -438,7 +400,7 @@ const fileStore = {
 };
 
 // ---------- 导出 ----------
-const store = MODE === 'pg' ? pgStore : fileStore;
+const store = MODE === 'cos' ? cosStore : fileStore;
 store.mode = MODE;
-store.init = MODE === 'pg' ? pgStore.init : fileStore.init;
+store.init = MODE === 'cos' ? cosStore.init : fileStore.init;
 module.exports = store;

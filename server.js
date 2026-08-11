@@ -12,7 +12,7 @@
  * 字段存储为原始文本，XSS 防护在前端渲染时做转义。
  *
  * 存储：本地用 data/data.json（文件模式）；部署到腾讯云 CloudBase 云托管时，
- * 配置 DATABASE_URL 即自动切到 CloudBase PostgreSQL（pg 模式）。见 storage.js。
+ * 配置 COS_SECRET_ID / COS_SECRET_KEY / COS_BUCKET 即自动切到腾讯云 COS（cos 模式）。见 storage.js。
  */
 
 const http = require('http');

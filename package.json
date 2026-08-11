@@ -1,13 +1,13 @@
 {
   "name": "anonymous-board",
-  "version": "1.3.0",
-  "description": "完全匿名的问答 / 话题讨论墙（Node.js，生产用腾讯云 MongoDB，本地用文件存储兜底）",
+  "version": "1.4.0",
+  "description": "完全匿名的问答 / 话题讨论墙（Node.js，生产用腾讯云 CloudBase PostgreSQL，本地用文件存储兜底）",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "mongodb": "^6.5.0"
+    "pg": "^8.12.0"
   },
   "engines": {
     "node": ">=18"

@@ -254,6 +254,27 @@ const cosStore = {
     };
     if (MODE === 'cos') {
       try {
+        // 真实连通性：headBucket 探活（凭证/桶/地域不对会直接报错，不像 readRemote 静默兜底）
+        await new Promise((resolve, reject) => {
+          getCos().headBucket({ Bucket: COS_BUCKET, Region: COS_REGION }, (err, data) => {
+            if (err) return reject(err);
+            resolve(data);
+          });
+        });
+        // 读写往返测试：证明确实可写、可读，再清理探针对象
+        const probeKey = COS_KEY + '.probe-' + Date.now();
+        await new Promise((resolve, reject) => {
+          getCos().putObject({
+            Bucket: COS_BUCKET, Region: COS_REGION, Key: probeKey,
+            Body: '1', ContentType: 'text/plain',
+          }, (e) => (e ? reject(e) : resolve()));
+        });
+        await new Promise((resolve, reject) => {
+          getCos().getObject({ Bucket: COS_BUCKET, Region: COS_REGION, Key: probeKey }, (e) => (e ? reject(e) : resolve()));
+        });
+        await new Promise((resolve) => {
+          getCos().deleteObject({ Bucket: COS_BUCKET, Region: COS_REGION, Key: probeKey }, () => resolve());
+        });
         const d = await readRemote();
         info.cos = {
           ok: true,
@@ -261,7 +282,7 @@ const cosStore = {
           replyCount: d.replies.length,
         };
       } catch (e) {
-        info.cos = { ok: false, message: e && e.message };
+        info.cos = { ok: false, message: (e && e.message) || String(e) };
       }
     }
     return info;

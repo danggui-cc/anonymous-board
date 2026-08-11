@@ -73,13 +73,12 @@ function getDB() {
   if (_db) return _db;
   // 懒加载：file 模式下永远不会 require，避免无谓依赖
   const tcb = require('@cloudbase/node-sdk');
-  // 优先使用平台注入的显式环境 ID（云托管通常会设置 TCB_ENV / SCF_NAMESPACE），
-  // 否则回退到 SYMBOL_CURRENT_ENV 自动探测。显式 env 比符号解析更稳，
-  // 能避免"探测通过但真实读写连到错误环境"的诡异问题。
-  const env = process.env.TCB_ENV || process.env.SCF_NAMESPACE || tcb.SYMBOL_CURRENT_ENV;
-  console.log('[storage] tcb.init env =', process.env.TCB_ENV ? `TCB_ENV(${process.env.TCB_ENV})`
-    : process.env.SCF_NAMESPACE ? `SCF_NAMESPACE(${process.env.SCF_NAMESPACE})`
-    : 'SYMBOL_CURRENT_ENV');
+  // 重要：CloudBase 云托管【不会】自动注入 TCB_ENV / SCF_NAMESPACE 等环境变量
+  // （已用 /api/debug 验证 envSet 三项全为 false）。因此 SYMBOL_CURRENT_ENV 在云托管里
+  // 解析不到正确环境，会导致云数据库读写全部超时、数据无法跨浏览器共享。
+  // 这里显式写死本项目云环境 ID 作为兜底，确保一定连到正确的云数据库。
+  const env = process.env.TCB_ENV || process.env.SCF_NAMESPACE || 'yuyan-d1glwnbe78adbecd0';
+  console.log('[storage] tcb.init env =', env);
   const app = tcb.init({ env });
   _db = app.database();
   return _db;

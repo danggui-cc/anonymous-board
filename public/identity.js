@@ -98,8 +98,31 @@
     return deterministicAuthor(item ? item.id : '');
   }
 
+  // ---------- 跨设备身份（账号）----------
+  // 每个浏览器分配一个固定 ID（存 localStorage）。发帖/留言时带上此 ID，
+  // 服务端即可按"人"聚合；换设备凭 ID + 密码找回。密码为可选。
+  const UID_KEY = 'yyx_uid';
+  const UID_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  function genUid() {
+    const a = crypto.getRandomValues(new Uint8Array(12));
+    let s = '';
+    for (let i = 0; i < 12; i++) s += UID_CHARS[a[i] % UID_CHARS.length];
+    return s;
+  }
+  function getOrCreateUid() {
+    let u = '';
+    try { u = localStorage.getItem(UID_KEY) || ''; } catch (e) {}
+    if (!u) { u = genUid(); try { localStorage.setItem(UID_KEY, u); } catch (e) {} }
+    return u;
+  }
+  function getUid() {
+    try { return localStorage.getItem(UID_KEY) || ''; } catch (e) { return ''; }
+  }
+  function setUid(u) { try { if (u) localStorage.setItem(UID_KEY, String(u)); } catch (e) {} }
+
   window.YuyanIdentity = {
     genIdentity, getVisitor, setVisitor, getOrCreateVisitor,
-    deterministicAuthor, authorOf, NICK_PRE, NICK_SUF, AV, COLOR,
+    deterministicAuthor, authorOf, getOrCreateUid, getUid, setUid,
+    NICK_PRE, NICK_SUF, AV, COLOR,
   };
 })();

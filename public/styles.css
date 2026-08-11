@@ -379,3 +379,19 @@ body {
   .ask-cta { flex-direction: column; align-items: stretch; }
   .ask-open-btn { width: 100%; }
 }
+
+/* 我的身份（跨设备找回） */
+.identity-block { padding: 4px 6px 2px; display: flex; flex-direction: column; gap: 8px; }
+.identity-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.identity-sub { font-size: 11px; color: var(--muted); font-weight: 400; }
+.uid-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.uid-label { font-size: 12px; color: var(--muted); }
+.uid-value { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; color: var(--deep); background: #f3f7f4; border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; word-break: break-all; }
+.identity-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.identity-form { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.identity-form .admin-input { flex: 1; min-width: 120px; }
+.identity-msg { font-size: 12px; min-height: 16px; line-height: 1.5; }
+.identity-msg.ok { color: #2f7d54; }
+.identity-msg.err { color: var(--danger); }
+.ghost-btn.tiny { background: #fff; border: 1px solid var(--line); color: var(--brand); padding: 4px 10px; border-radius: 8px; cursor: pointer; font-size: 12px; }
+.ghost-btn.tiny:hover { background: var(--brand-soft); }

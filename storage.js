@@ -52,6 +52,15 @@ function writeStore(store) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(store, null, 2));
 }
 
+// 用户账号（跨设备身份）本地兜底存储 —— 仅本地模式使用，云数据库模式走 users 集合
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
+function readUsers() {
+  ensureStore();
+  try { const s = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); return Array.isArray(s) ? s : []; }
+  catch (e) { return []; }
+}
+function writeUsers(arr) { ensureStore(); fs.writeFileSync(USERS_FILE, JSON.stringify(arr, null, 2)); }
+
 // ---------------- 云数据库模式（CloudBase） ----------------
 let _db = null;
 let _tcbHealthy = null; // null = 未探测，true/false = 探测结果
@@ -101,6 +110,7 @@ async function ensureCollections() {
     const db = getDB();
     await withTimeout(db.createCollection('questions'), 5000, 'createCollection questions').catch(() => {});
     await withTimeout(db.createCollection('replies'), 5000, 'createCollection replies').catch(() => {});
+    await withTimeout(db.createCollection('users'), 5000, 'createCollection users').catch(() => {});
   } catch (e) { /* 忽略，控制台手动创建亦可 */ }
 }
 
@@ -303,6 +313,89 @@ const store = {
     const rc = {};
     s.replies.forEach((r) => { rc[r.questionId] = (rc[r.questionId] || 0) + 1; });
     return rc;
+  },
+
+  // ---------- 用户账号（跨设备身份）----------
+  // 返回全部回复（不分问题），用于按 ownerId 聚合"我的留言"
+  async listAllReplies() {
+    if (await probeTcbHealth()) {
+      try {
+        const db = getDB();
+        const res = await withTimeout(db.collection('replies').limit(1000).get(), 10000, 'listAllReplies');
+        return res.data || [];
+      } catch (e) {
+        console.warn('[storage] listAllReplies tcb 失败，本次降级 file:', e && e.message);
+      }
+    }
+    return readStore().replies.slice();
+  },
+
+  // 创建账号（仅当 id 不存在时写入）。user: { id, salt, pwdHash }
+  async createUser(user) {
+    if (await probeTcbHealth()) {
+      try {
+        const db = getDB();
+        const res = await withTimeout(db.collection('users').doc(user.id).get(), 8000, 'getUser');
+        if (res.data && res.data[0]) return { ok: true, existed: true };
+        await withTimeout(db.collection('users').doc(user.id).set(user), 8000, 'createUser');
+        return { ok: true, existed: false };
+      } catch (e) { console.warn('[storage] createUser tcb 失败:', e && e.message); }
+    }
+    const arr = readUsers();
+    if (arr.find((u) => u.id === user.id)) return { ok: true, existed: true };
+    arr.push(user); writeUsers(arr);
+    return { ok: true, existed: false };
+  },
+
+  // 取某用户的盐（公开，供前端计算登录哈希）。不存在返回 null
+  async getUserSalt(id) {
+    if (await probeTcbHealth()) {
+      try {
+        const db = getDB();
+        const res = await withTimeout(db.collection('users').doc(id).get(), 8000, 'getUserSalt');
+        const u = res.data && res.data[0];
+        return u ? u.salt : null;
+      } catch (e) { console.warn('[storage] getUserSalt tcb 失败:', e && e.message); }
+    }
+    const u = readUsers().find((x) => x.id === id);
+    return u ? u.salt : null;
+  },
+
+  // 校验密码哈希。返回 boolean
+  async verifyUser(id, pwdHash) {
+    if (await probeTcbHealth()) {
+      try {
+        const db = getDB();
+        const res = await withTimeout(db.collection('users').doc(id).get(), 8000, 'verifyUser');
+        const u = res.data && res.data[0];
+        return !!(u && u.pwdHash === pwdHash);
+      } catch (e) { console.warn('[storage] verifyUser tcb 失败:', e && e.message); }
+    }
+    const u = readUsers().find((x) => x.id === id);
+    return !!(u && u.pwdHash === pwdHash);
+  },
+
+  // 按 ownerId 列出"我的提问"（含回复数）
+  async listMyQuestions(ownerId) {
+    const all = await store.listQuestions();
+    const rc = await store.replyCounts();
+    return all
+      .filter((p) => p.ownerId === ownerId)
+      .map((p) => ({
+        id: p.id, title: p.title, content: p.content, category: p.category,
+        createdAt: p.createdAt, author: p.author || null, replyCount: rc[p.id] || 0,
+      }));
+  },
+
+  // 按 ownerId 列出"我的留言"（含所属 questionId，供前端补足标题）
+  async listMyReplies(ownerId) {
+    const all = await store.listAllReplies();
+    return (all || [])
+      .filter((r) => r.ownerId === ownerId)
+      .map((r) => ({
+        id: r.id, content: r.content, createdAt: r.createdAt, questionId: r.questionId,
+        quoteId: r.quoteId || null, rootId: r.rootId || null, author: r.author || null,
+      }));
   },
 };
 

@@ -46,6 +46,19 @@ const menuMyQuestions = $('#menuMyQuestions');
 const menuMyReplies = $('#menuMyReplies');
 const myQuestionsPanel = $('#myQuestionsPanel');
 const myRepliesPanel = $('#myRepliesPanel');
+const uidRow = $('#uidRow');
+const uidValue = $('#uidValue');
+const uidCopy = $('#uidCopy');
+const setPwdBtn = $('#setPwdBtn');
+const recoverBtn = $('#recoverBtn');
+const setPwdPanel = $('#setPwdPanel');
+const setPwdInput = $('#setPwdInput');
+const setPwdConfirm = $('#setPwdConfirm');
+const recoverPanel = $('#recoverPanel');
+const recUidInput = $('#recUidInput');
+const recPwdInput = $('#recPwdInput');
+const recConfirm = $('#recConfirm');
+const identityMsg = $('#identityMsg');
 
 // ---------- 存储 ----------
 function getTokens() { try { return JSON.parse(localStorage.getItem(TOKEN_KEY)) || {}; } catch (e) { return {}; } }
@@ -59,14 +72,15 @@ function showToast(m) { toast.textContent = m; toast.classList.remove('hidden');
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function fmtDate(ts) { const d = new Date(ts); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 function escapeAttr(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
-function copyText(t) {
+function copyText(t, msg) {
+  const ok = msg || '已复制链接';
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(t).then(() => showToast('已复制链接')).catch(() => fallbackCopy(t));
-  } else fallbackCopy(t);
+    navigator.clipboard.writeText(t).then(() => showToast(ok)).catch(() => fallbackCopy(t, ok));
+  } else fallbackCopy(t, ok);
 }
-function fallbackCopy(t) {
+function fallbackCopy(t, msg) {
   const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select();
-  try { document.execCommand('copy'); showToast('已复制链接'); } catch (e) { showToast('复制失败，请手动复制'); }
+  try { document.execCommand('copy'); showToast(msg || '已复制链接'); } catch (e) { showToast('复制失败，请手动复制'); }
   document.body.removeChild(ta);
 }
 function baseUrl() { return location.origin + location.pathname.replace(/index\.html$/, ''); }
@@ -156,8 +170,24 @@ async function renderMyQuestions() {
   try {
     const all = await apiList({ category: '全部', q: '' });
     const owned = getOwned();
-    const mine = all.filter((q) => owned[q.id]?.type === 'question');
-    renderMyQuestionsPanel(mine);
+    // 本地记录（本设备发过的，含更新前老帖）
+    const localMine = all.filter((q) => owned[q.id]?.type === 'question');
+    // 服务端按 ownerId（跨设备找回，含本设备新帖）
+    let serverMine = [];
+    if (MODE === 'backend') {
+      const uid = YuyanIdentity.getUid();
+      if (uid) {
+        try {
+          const res = await fetch('/api/me/questions?ownerId=' + encodeURIComponent(uid));
+          if (res.ok) { const d = await res.json(); serverMine = d.questions || []; }
+        } catch (e) { /* 忽略，降级为仅本地 */ }
+      }
+    }
+    const byId = new Map();
+    localMine.forEach((q) => byId.set(q.id, q));
+    serverMine.forEach((q) => { if (!byId.has(q.id)) byId.set(q.id, q); });
+    const merged = [...byId.values()].sort((a, b) => b.createdAt - a.createdAt);
+    renderMyQuestionsPanel(merged);
   } catch (e) {
     myQuestionsPanel.innerHTML = '<div class="empty">加载失败，请重试</div>';
   }
@@ -187,6 +217,7 @@ async function renderMyReplies() {
         (byQid[info.questionId] ||= []).push(id);
       }
     });
+    // 本设备记录（含更新前老帖）
     const items = [];
     for (const [qid, rids] of Object.entries(byQid)) {
       const d = await apiGetQuestionRaw(qid);
@@ -196,8 +227,31 @@ async function renderMyReplies() {
         if (r) items.push({ qid, qtitle: d.question.title, reply: r });
       });
     }
-    items.sort((a, b) => b.reply.createdAt - a.reply.createdAt);
-    renderMyRepliesPanel(items);
+    // 服务端按 ownerId（跨设备找回，含本设备新帖）
+    if (MODE === 'backend') {
+      const uid = YuyanIdentity.getUid();
+      if (uid) {
+        try {
+          const res = await fetch('/api/me/replies?ownerId=' + encodeURIComponent(uid));
+          if (res.ok) {
+            const d = await res.json();
+            const replies = d.replies || [];
+            const qids = [...new Set(replies.map((r) => r.questionId))];
+            const cache = {};
+            for (const qid of qids) cache[qid] = await apiGetQuestionRaw(qid);
+            replies.forEach((r) => {
+              const dd = cache[r.questionId];
+              if (dd) items.push({ qid: r.questionId, qtitle: dd.question.title, reply: r });
+            });
+          }
+        } catch (e) { /* 忽略，降级为仅本地 */ }
+      }
+    }
+    const seen = new Set(items.map((it) => it.reply.id));
+    // 去重（同一回复可能被本地+服务端各计一次）
+    const deduped = items.filter((it, i) => items.findIndex((x) => x.reply.id === it.reply.id) === i);
+    deduped.sort((a, b) => b.reply.createdAt - a.reply.createdAt);
+    renderMyRepliesPanel(deduped);
   } catch (e) {
     myRepliesPanel.innerHTML = '<div class="empty">加载失败，请重试</div>';
   }
@@ -240,6 +294,82 @@ function hideAllSubPanels() {
   myRepliesPanel.classList.add('hidden');
 }
 
+// ---------- 跨设备身份（账号）----------
+// 密码安全：明文密码绝不存储/下发。前端用「盐 + 密码」算 SHA-256 哈希，
+// 只把盐与哈希发给后端；登录时再取盐重算哈希做比对（HTTPS 下亦安全）。
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+async function hashPassword(password, salt) { return sha256Hex(salt + ':' + password); }
+function genSalt() {
+  const a = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(a).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function initIdentityUI() {
+  const uid = YuyanIdentity.getOrCreateUid();
+  uidValue.textContent = uid;
+  uidRow.classList.remove('hidden');
+}
+
+uidCopy.addEventListener('click', () => copyText(YuyanIdentity.getUid(), '已复制身份 ID'));
+
+setPwdBtn.addEventListener('click', () => {
+  hideAllSubPanels();
+  setPwdPanel.classList.toggle('hidden');
+  recoverPanel.classList.add('hidden');
+  identityMsg.textContent = '';
+  if (!setPwdPanel.classList.contains('hidden')) setPwdInput.focus();
+});
+setPwdConfirm.addEventListener('click', async () => {
+  const pw = setPwdInput.value;
+  if (!pw || pw.length < 4) { identityMsg.textContent = '密码至少 4 位'; identityMsg.className = 'identity-msg err'; return; }
+  const uid = YuyanIdentity.getOrCreateUid();
+  const salt = genSalt();
+  const pwdHash = await hashPassword(pw, salt);
+  setPwdConfirm.disabled = true;
+  try {
+    const res = await fetch('/api/account/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: uid, salt, pwdHash }) });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { identityMsg.textContent = d.error || '设置失败'; identityMsg.className = 'identity-msg err'; return; }
+    identityMsg.textContent = '已设置密码，换设备可用「恢复身份」找回 ✅'; identityMsg.className = 'identity-msg ok';
+    setPwdInput.value = '';
+    setPwdPanel.classList.add('hidden');
+    showToast('密码已设置');
+  } catch (e) { identityMsg.textContent = '网络错误，请重试'; identityMsg.className = 'identity-msg err'; }
+  finally { setPwdConfirm.disabled = false; }
+});
+
+recoverBtn.addEventListener('click', () => {
+  hideAllSubPanels();
+  recoverPanel.classList.toggle('hidden');
+  setPwdPanel.classList.add('hidden');
+  identityMsg.textContent = '';
+  if (!recoverPanel.classList.contains('hidden')) recUidInput.focus();
+});
+recConfirm.addEventListener('click', async () => {
+  const uid = recUidInput.value.trim();
+  const pw = recPwdInput.value;
+  if (!uid || !pw) { identityMsg.textContent = '请填写身份 ID 与密码'; identityMsg.className = 'identity-msg err'; return; }
+  recConfirm.disabled = true;
+  try {
+    const r1 = await fetch('/api/account/salt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: uid }) });
+    if (!r1.ok) { const d = await r1.json().catch(() => ({})); identityMsg.textContent = d.error || '该身份 ID 不存在'; identityMsg.className = 'identity-msg err'; return; }
+    const d1 = await r1.json();
+    const pwdHash = await hashPassword(pw, d1.salt);
+    const r2 = await fetch('/api/account/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: uid, pwdHash }) });
+    if (!r2.ok) { identityMsg.textContent = '身份 ID 或密码不正确'; identityMsg.className = 'identity-msg err'; return; }
+    YuyanIdentity.setUid(uid);
+    uidValue.textContent = uid;
+    identityMsg.textContent = '已恢复身份，现在「我的提问 / 我的留言」包含这台设备找回的内容 ✅'; identityMsg.className = 'identity-msg ok';
+    recoverPanel.classList.add('hidden');
+    recUidInput.value = ''; recPwdInput.value = '';
+    showToast('身份已恢复');
+  } catch (e) { identityMsg.textContent = '网络错误，请重试'; identityMsg.className = 'identity-msg err'; }
+  finally { recConfirm.disabled = false; }
+});
+
 // ---------- 汉堡菜单（收起管理/通知/模式标识）----------
 menuBtn.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -279,14 +409,15 @@ async function apiList({ category, q }) {
 }
 
 async function apiCreateQuestion({ title, content, category, author }) {
+  const ownerId = YuyanIdentity.getUid();
   if (MODE === 'backend') {
-    const res = await fetch('/api/questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, content, category, author }) });
+    const res = await fetch('/api/questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, content, category, author, ownerId }) });
     const d = await res.json();
     if (!res.ok) throw new Error(d.error || '提交失败');
     return d;
   }
   const id = makeId(); const token = makeToken();
-  const q = { id, title, content, category, createdAt: Date.now(), deleteToken: token, replies: [], author: author || null };
+  const q = { id, title, content, category, createdAt: Date.now(), deleteToken: token, replies: [], author: author || null, ownerId };
   const arr = getLocal(); arr.push(q); setLocal(arr);
   return { id, deleteToken: token };
 }
@@ -503,6 +634,8 @@ questionList.addEventListener('click', (e) => {
 (async function start() {
   CATEGORIES.forEach((c) => { const o = document.createElement('option'); o.value = c; o.textContent = c; categoryInput.appendChild(o); });
   categoryInput.value = '其他';
+  YuyanIdentity.getOrCreateUid();
+  initIdentityUI();
   await detectMode();
   renderCats();
   adminPanel.classList.add('locked');

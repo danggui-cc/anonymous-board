@@ -78,7 +78,7 @@ async function apiGetQuestion(id) {
 async function apiCreateReply(id, content, quoteId) {
   const me = YuyanIdentity.getOrCreateVisitor(id); // 同一问题内本人身份一致
   if (MODE === 'backend') {
-    const body = { content, author: me };
+    const body = { content, author: me, ownerId: YuyanIdentity.getUid() };
     if (quoteId) body.quoteId = quoteId;
     const res = await fetch('/api/questions/' + id + '/replies', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const d = await res.json(); if (!res.ok) throw new Error(d.error || '留言失败'); return d;
@@ -86,7 +86,7 @@ async function apiCreateReply(id, content, quoteId) {
   const arr = getLocal(); const q = arr.find((x) => x.id === id);
   if (!q) throw new Error('问题不存在');
   const rid = makeId(); const token = makeToken();
-  const reply = { id: rid, content, createdAt: Date.now(), deleteToken: token, author: me };
+  const reply = { id: rid, content, createdAt: Date.now(), deleteToken: token, author: me, ownerId: YuyanIdentity.getUid() };
   if (quoteId) {
     reply.quoteId = quoteId;
     const byId = {}; currentReplies.forEach((r) => { byId[r.id] = r; });

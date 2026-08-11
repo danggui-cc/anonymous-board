@@ -150,6 +150,7 @@ async function handleApi(req, res, url) {
       createdAt: Date.now(),
       deleteToken: makeToken(),
       author: parseAuthor(body),
+      ownerId: (body.ownerId || '').toString().trim() || undefined,
     };
     await store.createQuestion(post);
     return sendJSON(res, 201, { id: post.id, deleteToken: post.deleteToken, message: '提交成功' });
@@ -202,6 +203,7 @@ async function handleApi(req, res, url) {
       id: makeId(), questionId: id,
       content: clip(content, MAX_CONTENT), createdAt: Date.now(), deleteToken: makeToken(),
       quoteId: quoteId || undefined, rootId: rootId || undefined, author: parseAuthor(body),
+      ownerId: (body.ownerId || '').toString().trim() || undefined,
     };
     await store.createReply(reply);
     return sendJSON(res, 201, { id: reply.id, deleteToken: reply.deleteToken, message: '回复成功' });
@@ -242,6 +244,54 @@ async function handleApi(req, res, url) {
     const r = await store.adminDeleteReply(parts[3]);
     if (!r.ok) return sendJSON(res, r.code, { error: '回复不存在' });
     return sendJSON(res, 200, { message: '已删除' });
+  }
+
+  // ---------- 跨设备身份（账号）----------
+  // POST /api/account/setup  { id, salt, pwdHash }  建立账号（仅首次）
+  if (method === 'POST' && parts.length === 3 && parts[1] === 'account' && parts[2] === 'setup') {
+    let body; try { body = await readBody(req); } catch (e) { return sendJSON(res, 400, { error: '请求格式错误' }); }
+    const id = (body.id || '').toString().trim();
+    const salt = (body.salt || '').toString();
+    const pwdHash = (body.pwdHash || '').toString();
+    if (!/^[A-Za-z0-9_\-]{6,40}$/.test(id)) return sendJSON(res, 400, { error: '身份 ID 格式不正确' });
+    if (!salt || !pwdHash) return sendJSON(res, 400, { error: '缺少必要字段' });
+    const r = await store.createUser({ id, salt, pwdHash });
+    return sendJSON(res, 200, { ok: true, existed: !!r.existed });
+  }
+
+  // POST /api/account/salt  { id }  -> 返回盐（前端据此计算登录哈希；明文口令不下发）
+  if (method === 'POST' && parts.length === 3 && parts[1] === 'account' && parts[2] === 'salt') {
+    let body; try { body = await readBody(req); } catch (e) { return sendJSON(res, 400, { error: '请求格式错误' }); }
+    const id = (body.id || '').toString().trim();
+    const salt = await store.getUserSalt(id);
+    if (salt === null) return sendJSON(res, 404, { error: '该身份 ID 不存在，请检查是否输入正确' });
+    return sendJSON(res, 200, { salt });
+  }
+
+  // POST /api/account/login  { id, pwdHash }  -> 校验密码（hash 比对，明文口令不存储/不下发）
+  if (method === 'POST' && parts.length === 3 && parts[1] === 'account' && parts[2] === 'login') {
+    let body; try { body = await readBody(req); } catch (e) { return sendJSON(res, 400, { error: '请求格式错误' }); }
+    const id = (body.id || '').toString().trim();
+    const pwdHash = (body.pwdHash || '').toString();
+    const ok = await store.verifyUser(id, pwdHash);
+    if (!ok) return sendJSON(res, 401, { error: '身份 ID 或密码不正确' });
+    return sendJSON(res, 200, { ok: true });
+  }
+
+  // GET /api/me/questions?ownerId=  我的提问
+  if (method === 'GET' && parts.length === 3 && parts[1] === 'me' && parts[2] === 'questions') {
+    const ownerId = (q.get('ownerId') || '').trim();
+    if (!ownerId) return sendJSON(res, 400, { error: '缺少 ownerId' });
+    const list = await store.listMyQuestions(ownerId);
+    return sendJSON(res, 200, { questions: list });
+  }
+
+  // GET /api/me/replies?ownerId=  我的留言
+  if (method === 'GET' && parts.length === 3 && parts[1] === 'me' && parts[2] === 'replies') {
+    const ownerId = (q.get('ownerId') || '').trim();
+    if (!ownerId) return sendJSON(res, 400, { error: '缺少 ownerId' });
+    const list = await store.listMyReplies(ownerId);
+    return sendJSON(res, 200, { replies: list });
   }
 
   return sendJSON(res, 404, { error: '接口不存在' });

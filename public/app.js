@@ -38,8 +38,7 @@ const askOpenBtn = $('#askOpenBtn');
 const askModal = $('#askModal');
 const askCloseBtn = $('#askCloseBtn');
 const notifBadge = $('#notifBadge');
-const menuBtn = $('#menuBtn');
-const headerMenu = $('#headerMenu');
+const meBtn = $('#meBtn');
 
 // ---------- 存储 ----------
 function getTokens() { try { return JSON.parse(localStorage.getItem(TOKEN_KEY)) || {}; } catch (e) { return {}; } }
@@ -124,20 +123,6 @@ async function refreshNotif() {
   if (unread > 0) { notifBadge.textContent = unread > 99 ? '99+' : String(unread); notifBadge.classList.remove('hidden'); }
   else { notifBadge.classList.add('hidden'); }
 }
-
-// ---------- 汉堡菜单（收起管理/通知/模式标识）----------
-menuBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  const willShow = headerMenu.classList.contains('hidden');
-  headerMenu.classList.toggle('hidden');
-  menuBtn.setAttribute('aria-expanded', String(willShow));
-});
-document.addEventListener('click', (e) => {
-  if (!e.target.closest('#headerMenu') && !e.target.closest('#menuBtn')) {
-    headerMenu.classList.add('hidden');
-    menuBtn.setAttribute('aria-expanded', 'false');
-  }
-});
 
 // ---------- 数据访问（双模式）----------
 async function apiList({ category, q }) {
@@ -336,18 +321,24 @@ function showManageBox(id, token) {
 function loadAdmin() { ADMIN = !!localStorage.getItem('yyx_admin'); }
 function enterAdminMode() {
   ADMIN = true;
-  adminPanel.classList.remove('locked');
-  adminPanel.classList.add('unlocked');
-  adminPanel.querySelector('.admin-label').textContent = '管理模式';
-  adminKeyInput.value = '';
+  if (adminPanel) {
+    adminPanel.classList.remove('locked');
+    adminPanel.classList.add('unlocked');
+    const label = adminPanel.querySelector('.admin-label');
+    if (label) label.textContent = '管理模式';
+  }
+  if (adminKeyInput) adminKeyInput.value = '';
   loadQuestions();
 }
 function exitAdminMode() {
   ADMIN = false;
   localStorage.removeItem('yyx_admin');
-  adminPanel.classList.remove('unlocked');
-  adminPanel.classList.add('locked');
-  adminPanel.querySelector('.admin-label').textContent = '管理员口令';
+  if (adminPanel) {
+    adminPanel.classList.remove('unlocked');
+    adminPanel.classList.add('locked');
+    const label = adminPanel.querySelector('.admin-label');
+    if (label) label.textContent = '管理员口令';
+  }
   loadQuestions();
 }
 async function adminUnlock() {
@@ -377,9 +368,9 @@ async function adminDeleteQuestion(id) {
     await loadQuestions();
   } catch (e) { showToast(e.message || '删除失败'); }
 }
-adminUnlockBtn.addEventListener('click', adminUnlock);
-adminExit.addEventListener('click', exitAdminMode);
-adminKeyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') adminUnlock(); });
+if (adminUnlockBtn) adminUnlockBtn.addEventListener('click', adminUnlock);
+if (adminExit) adminExit.addEventListener('click', exitAdminMode);
+if (adminKeyInput) adminKeyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') adminUnlock(); });
 questionList.addEventListener('click', (e) => {
   const btn = e.target.closest('.card-del');
   if (btn) adminDeleteQuestion(btn.dataset.id);
@@ -392,7 +383,7 @@ questionList.addEventListener('click', (e) => {
   YuyanIdentity.getOrCreateUid();
   await detectMode();
   renderCats();
-  adminPanel.classList.add('locked');
+  if (adminPanel) adminPanel.classList.add('locked');
   loadAdmin();
   if (ADMIN) enterAdminMode();
   await loadQuestions();

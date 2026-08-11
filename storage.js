@@ -54,6 +54,8 @@ function writeStore(store) {
 
 // ---------------- 云数据库模式（CloudBase） ----------------
 let _db = null;
+let _tcbHealthy = null; // null = 未探测，true/false = 探测结果
+
 function getDB() {
   if (_db) return _db;
   // 懒加载：file 模式下永远不会 require，避免无谓依赖
@@ -63,49 +65,97 @@ function getDB() {
   return _db;
 }
 
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label || '操作'} 超时 (${ms}ms)`)), ms)
+    ),
+  ]);
+}
+
+// 探测云数据库是否真正可用（避免 tcb 初始化后调用永远挂起导致 API 无响应）
+async function probeTcbHealth() {
+  if (_tcbHealthy !== null) return _tcbHealthy;
+  if (MODE !== 'tcb') { _tcbHealthy = false; return false; }
+  try {
+    const db = getDB();
+    await withTimeout(db.collection('questions').limit(1).get(), 5000, 'tcb 健康探测');
+    _tcbHealthy = true;
+    console.log('[storage] 云数据库探测成功，使用 tcb 模式');
+    return true;
+  } catch (e) {
+    _tcbHealthy = false;
+    console.warn('[storage] 云数据库探测失败，已降级为 file 模式（数据会写在容器内，重启丢失）:', e && e.message);
+    return false;
+  }
+}
+
 // 一次性尝试创建集合（权限不足时静默失败，由用户在控制台手动建）
 let _ensured = false;
 async function ensureCollections() {
   if (_ensured) return;
   _ensured = true;
-  if (MODE !== 'tcb') return;
+  if (!(await probeTcbHealth())) return;
   try {
     const db = getDB();
-    await db.createCollection('questions').catch(() => {});
-    await db.createCollection('replies').catch(() => {});
+    await withTimeout(db.createCollection('questions'), 5000, 'createCollection questions').catch(() => {});
+    await withTimeout(db.createCollection('replies'), 5000, 'createCollection replies').catch(() => {});
   } catch (e) { /* 忽略，控制台手动创建亦可 */ }
+}
+
+// 当前实际生效的存储模式（探测后可能从 tcb 降级为 file）
+function activeMode() {
+  if (MODE !== 'tcb') return 'file';
+  return _tcbHealthy === true ? 'tcb' : 'file';
 }
 
 // ---------------- 统一存储接口 ----------------
 const store = {
-  mode: MODE,
+  // 返回当前实际/预期存储模式（探测失败前仍显示 tcb，失败后降级为 file）
+  get mode() {
+    if (MODE !== 'tcb') return 'file';
+    return _tcbHealthy === false ? 'file' : 'tcb';
+  },
 
   // 启动时可调用：确保集合存在（仅 tcb 模式有效，失败不致命）
   async init() { await ensureCollections(); },
 
   async listQuestions() {
-    if (MODE === 'tcb') {
-      const db = getDB();
-      const res = await db.collection('questions').limit(1000).get();
-      return res.data || [];
+    if (await probeTcbHealth()) {
+      try {
+        const db = getDB();
+        const res = await withTimeout(db.collection('questions').limit(1000).get(), 10000, 'listQuestions');
+        return res.data || [];
+      } catch (e) {
+        console.warn('[storage] listQuestions tcb 失败，本次降级 file:', e && e.message);
+      }
     }
     return readStore().questions.slice();
   },
 
   async getQuestion(id) {
-    if (MODE === 'tcb') {
-      const db = getDB();
-      const res = await db.collection('questions').doc(id).get();
-      return (res.data && res.data[0]) || null;
+    if (await probeTcbHealth()) {
+      try {
+        const db = getDB();
+        const res = await withTimeout(db.collection('questions').doc(id).get(), 8000, 'getQuestion');
+        return (res.data && res.data[0]) || null;
+      } catch (e) {
+        console.warn('[storage] getQuestion tcb 失败，本次降级 file:', e && e.message);
+      }
     }
     return readStore().questions.find((p) => p.id === id) || null;
   },
 
   async createQuestion(q) {
-    if (MODE === 'tcb') {
-      const db = getDB();
-      await db.collection('questions').doc(q.id).set(q);
-      return q;
+    if (await probeTcbHealth()) {
+      try {
+        const db = getDB();
+        await withTimeout(db.collection('questions').doc(q.id).set(q), 8000, 'createQuestion');
+        return q;
+      } catch (e) {
+        console.warn('[storage] createQuestion tcb 失败，本次降级 file:', e && e.message);
+      }
     }
     const s = readStore();
     s.questions.push(q);
@@ -115,15 +165,19 @@ const store = {
 
   // 返回 { ok:boolean, code:404|403 }
   async deleteQuestion(id, token) {
-    if (MODE === 'tcb') {
-      const db = getDB();
-      const res = await db.collection('questions').doc(id).get();
-      const q = res.data && res.data[0];
-      if (!q) return { ok: false, code: 404 };
-      if (q.deleteToken !== token) return { ok: false, code: 403 };
-      await db.collection('questions').doc(id).remove();
-      await db.collection('replies').where({ questionId: id }).remove();
-      return { ok: true };
+    if (await probeTcbHealth()) {
+      try {
+        const db = getDB();
+        const res = await withTimeout(db.collection('questions').doc(id).get(), 8000, 'deleteQuestion.get');
+        const q = res.data && res.data[0];
+        if (!q) return { ok: false, code: 404 };
+        if (q.deleteToken !== token) return { ok: false, code: 403 };
+        await withTimeout(db.collection('questions').doc(id).remove(), 8000, 'deleteQuestion.remove');
+        await withTimeout(db.collection('replies').where({ questionId: id }).remove(), 8000, 'deleteQuestion.removeReplies');
+        return { ok: true };
+      } catch (e) {
+        console.warn('[storage] deleteQuestion tcb 失败，本次降级 file:', e && e.message);
+      }
     }
     const s = readStore();
     const idx = s.questions.findIndex((p) => p.id === id);
@@ -136,13 +190,17 @@ const store = {
   },
 
   async adminDeleteQuestion(id) {
-    if (MODE === 'tcb') {
-      const db = getDB();
-      const res = await db.collection('questions').doc(id).get();
-      if (!(res.data && res.data[0])) return { ok: false, code: 404 };
-      await db.collection('questions').doc(id).remove();
-      await db.collection('replies').where({ questionId: id }).remove();
-      return { ok: true };
+    if (await probeTcbHealth()) {
+      try {
+        const db = getDB();
+        const res = await withTimeout(db.collection('questions').doc(id).get(), 8000, 'adminDeleteQuestion.get');
+        if (!(res.data && res.data[0])) return { ok: false, code: 404 };
+        await withTimeout(db.collection('questions').doc(id).remove(), 8000, 'adminDeleteQuestion.remove');
+        await withTimeout(db.collection('replies').where({ questionId: id }).remove(), 8000, 'adminDeleteQuestion.removeReplies');
+        return { ok: true };
+      } catch (e) {
+        console.warn('[storage] adminDeleteQuestion tcb 失败，本次降级 file:', e && e.message);
+      }
     }
     const s = readStore();
     const idx = s.questions.findIndex((p) => p.id === id);
@@ -154,10 +212,14 @@ const store = {
   },
 
   async listReplies(questionId) {
-    if (MODE === 'tcb') {
-      const db = getDB();
-      const res = await db.collection('replies').where({ questionId }).get();
-      return (res.data || []).sort((a, b) => a.createdAt - b.createdAt);
+    if (await probeTcbHealth()) {
+      try {
+        const db = getDB();
+        const res = await withTimeout(db.collection('replies').where({ questionId }).get(), 8000, 'listReplies');
+        return (res.data || []).sort((a, b) => a.createdAt - b.createdAt);
+      } catch (e) {
+        console.warn('[storage] listReplies tcb 失败，本次降级 file:', e && e.message);
+      }
     }
     return readStore().replies
       .filter((r) => r.questionId === questionId)
@@ -165,10 +227,14 @@ const store = {
   },
 
   async createReply(reply) {
-    if (MODE === 'tcb') {
-      const db = getDB();
-      await db.collection('replies').doc(reply.id).set(reply);
-      return reply;
+    if (await probeTcbHealth()) {
+      try {
+        const db = getDB();
+        await withTimeout(db.collection('replies').doc(reply.id).set(reply), 8000, 'createReply');
+        return reply;
+      } catch (e) {
+        console.warn('[storage] createReply tcb 失败，本次降级 file:', e && e.message);
+      }
     }
     const s = readStore();
     s.replies.push(reply);
@@ -178,14 +244,18 @@ const store = {
 
   // 返回 { ok:boolean, code:404|403 }
   async deleteReply(id, token) {
-    if (MODE === 'tcb') {
-      const db = getDB();
-      const res = await db.collection('replies').doc(id).get();
-      const r = res.data && res.data[0];
-      if (!r) return { ok: false, code: 404 };
-      if (r.deleteToken !== token) return { ok: false, code: 403 };
-      await db.collection('replies').doc(id).remove();
-      return { ok: true };
+    if (await probeTcbHealth()) {
+      try {
+        const db = getDB();
+        const res = await withTimeout(db.collection('replies').doc(id).get(), 8000, 'deleteReply.get');
+        const r = res.data && res.data[0];
+        if (!r) return { ok: false, code: 404 };
+        if (r.deleteToken !== token) return { ok: false, code: 403 };
+        await withTimeout(db.collection('replies').doc(id).remove(), 8000, 'deleteReply.remove');
+        return { ok: true };
+      } catch (e) {
+        console.warn('[storage] deleteReply tcb 失败，本次降级 file:', e && e.message);
+      }
     }
     const s = readStore();
     const idx = s.replies.findIndex((r) => r.id === id);
@@ -197,12 +267,16 @@ const store = {
   },
 
   async adminDeleteReply(id) {
-    if (MODE === 'tcb') {
-      const db = getDB();
-      const res = await db.collection('replies').doc(id).get();
-      if (!(res.data && res.data[0])) return { ok: false, code: 404 };
-      await db.collection('replies').doc(id).remove();
-      return { ok: true };
+    if (await probeTcbHealth()) {
+      try {
+        const db = getDB();
+        const res = await withTimeout(db.collection('replies').doc(id).get(), 8000, 'adminDeleteReply.get');
+        if (!(res.data && res.data[0])) return { ok: false, code: 404 };
+        await withTimeout(db.collection('replies').doc(id).remove(), 8000, 'adminDeleteReply.remove');
+        return { ok: true };
+      } catch (e) {
+        console.warn('[storage] adminDeleteReply tcb 失败，本次降级 file:', e && e.message);
+      }
     }
     const s = readStore();
     const idx = s.replies.findIndex((r) => r.id === id);
@@ -214,12 +288,16 @@ const store = {
 
   // 各问题的回复数 map：{ questionId: count }
   async replyCounts() {
-    if (MODE === 'tcb') {
-      const db = getDB();
-      const res = await db.collection('replies').limit(1000).get();
-      const rc = {};
-      (res.data || []).forEach((r) => { rc[r.questionId] = (rc[r.questionId] || 0) + 1; });
-      return rc;
+    if (await probeTcbHealth()) {
+      try {
+        const db = getDB();
+        const res = await withTimeout(db.collection('replies').limit(1000).get(), 8000, 'replyCounts');
+        const rc = {};
+        (res.data || []).forEach((r) => { rc[r.questionId] = (rc[r.questionId] || 0) + 1; });
+        return rc;
+      } catch (e) {
+        console.warn('[storage] replyCounts tcb 失败，本次降级 file:', e && e.message);
+      }
     }
     const s = readStore();
     const rc = {};

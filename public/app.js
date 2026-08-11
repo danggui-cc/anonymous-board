@@ -33,7 +33,6 @@ const adminPanel = $('#adminPanel');
 const adminKeyInput = $('#adminKeyInput');
 const adminUnlockBtn = $('#adminUnlock');
 const adminExit = $('#adminExit');
-const manageBox = $('#manageBox');
 const askOpenBtn = $('#askOpenBtn');
 const askModal = $('#askModal');
 const askCloseBtn = $('#askCloseBtn');
@@ -63,8 +62,6 @@ function fallbackCopy(t, msg) {
   try { document.execCommand('copy'); showToast(msg || '已复制链接'); } catch (e) { showToast('复制失败，请手动复制'); }
   document.body.removeChild(ta);
 }
-function baseUrl() { return location.origin + location.pathname.replace(/index\.html$/, ''); }
-
 // ---------- 所有权 & 消息通知 ----------
 const OWNED_KEY = 'yyx_owned';
 const SEEN_KEY = 'yyx_seen';
@@ -282,7 +279,7 @@ searchInput.addEventListener('input', () => {
 });
 
 // ---------- 交互 ----------
-function updateCharCount() { charCount.textContent = `${contentInput.value.length} / 4000`; }
+function updateCharCount() { charCount.textContent = `${contentInput.value.length}/2000`; }
 contentInput.addEventListener('input', updateCharCount);
 postBtn.addEventListener('click', submitQuestion);
 refreshBtn.addEventListener('click', loadQuestions);
@@ -305,17 +302,6 @@ function setSort(s) {
 }
 sortTime.addEventListener('click', () => setSort('time'));
 sortHeat.addEventListener('click', () => setSort('heat'));
-
-// ---------- 管理链接 ----------
-function showManageBox(id, token) {
-  const url = baseUrl() + 'question.html?id=' + encodeURIComponent(id) + '&manage=' + encodeURIComponent(id) + '.' + encodeURIComponent(token);
-  manageBox.classList.remove('hidden');
-  manageBox.innerHTML =
-    '<div class="manage-label">🔗 管理链接（请妥善保存，凭此可在任意设备删除你的问题）：</div>' +
-    '<div class="manage-row"><input class="manage-url" readonly value="' + escapeAttr(url) + '" />' +
-    '<button class="ghost-btn small" id="copyManage">复制</button></div>';
-  document.getElementById('copyManage').addEventListener('click', () => copyText(url));
-}
 
 // ---------- 管理员 ----------
 function loadAdmin() { ADMIN = !!localStorage.getItem('yyx_admin'); }

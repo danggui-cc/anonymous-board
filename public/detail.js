@@ -108,7 +108,7 @@ async function apiDeleteReply(rid, token) {
 
 // ---------- 渲染 ----------
 function renderQuestion(q) {
-  qCat.textContent = '#' + q.category;
+  qCat.innerHTML = '#' + escapeHtml(q.category) + (q.featured ? ' <span class="post-topic featured">⭐ 精选</span>' : '');
   qTitle.textContent = q.title || '（无标题）';
   const a = YuyanIdentity.authorOf(q);
   qAuthor.innerHTML = '<span class="reply-avatar small" style="background:' + escapeAttr(a.color || '#E3EFE8') + '">' + (a.avatar || '🙂') + '</span>' +

@@ -12,6 +12,7 @@ let curCat = '全部';
 let curQ = '';
 let curSort = 'time';
 let ADMIN = false;
+let curFeatured = false;
 
 const $ = (s) => document.querySelector(s);
 const titleInput = $('#titleInput');
@@ -23,6 +24,8 @@ const composerMsg = $('#composerMsg');
 const searchInput = $('#searchInput');
 const allBtn = $('#allBtn');
 const catDropdown = $('#catDropdown');
+const featuredBtn = $('#featuredBtn');
+const adminMenu = $('#adminMenu');
 const questionList = $('#questionList');
 const refreshBtn = $('#refreshBtn');
 const modeBadge = $('#modeBadge');
@@ -122,18 +125,20 @@ async function refreshNotif() {
 }
 
 // ---------- 数据访问（双模式）----------
-async function apiList({ category, q }) {
+async function apiList({ category, q, featured }) {
   if (MODE === 'backend') {
     const p = new URLSearchParams();
-    if (category && category !== '全部') p.set('category', category);
+    if (category && category !== '全部' && !featured) p.set('category', category);
     if (q) p.set('q', q);
+    if (featured) p.set('featured', '1');
     p.set('sort', curSort);
     const res = await fetch('/api/questions?' + p.toString());
     const d = await res.json();
     return d.questions || [];
   }
   let arr = getLocal().slice();
-  if (category && category !== '全部') arr = arr.filter((x) => x.category === category);
+  if (featured) arr = arr.filter((x) => x.featured);
+  else if (category && category !== '全部') arr = arr.filter((x) => x.category === category);
   if (q) { q = q.toLowerCase(); arr = arr.filter((x) => (x.title || '').toLowerCase().includes(q) || (x.content || '').toLowerCase().includes(q)); }
   arr.sort((a, b) => {
     if (curSort === 'heat') {
@@ -142,7 +147,7 @@ async function apiList({ category, q }) {
     }
     return b.createdAt - a.createdAt;
   });
-  return arr.map((x) => ({ id: x.id, title: x.title, content: x.content, category: x.category, createdAt: x.createdAt, replyCount: (x.replies || []).length }));
+  return arr.map((x) => ({ id: x.id, title: x.title, content: x.content, category: x.category, createdAt: x.createdAt, replyCount: (x.replies || []).length, featured: !!x.featured }));
 }
 
 async function apiCreateQuestion({ title, content, category, author }) {
@@ -183,10 +188,11 @@ function buildCards(list) {
       `<span class="reply-avatar small" style="background:${escapeAttr(a.color || '#E3EFE8')}">${a.avatar || '🙂'}</span>` +
       `<span class="q-author-name">${escapeHtml(a.nickname || '匿名用户')}</span></div>`;
     const title = q.title ? `<h3 class="q-card-title">${escapeHtml(q.title)}</h3>` : '';
-    const adminBtnHtml = ADMIN ? `<button class="card-del" data-id="${escapeAttr(q.id)}" title="管理员删除">🛡</button>` : '';
+    const featuredBadge = q.featured ? `<span class="post-topic featured">⭐ 精选</span>` : '';
+    const adminBtnHtml = ADMIN ? `<button class="card-admin" data-id="${escapeAttr(q.id)}" data-featured="${q.featured ? 1 : 0}" title="管理">🛡 管理</button>` : '';
     card.innerHTML = `
       ${authorHtml}
-      <div class="q-card-top"><span class="post-topic">#${escapeHtml(q.category)}</span>${adminBtnHtml}</div>
+      <div class="q-card-top"><span class="post-topic">#${escapeHtml(q.category)}</span>${featuredBadge}${adminBtnHtml}</div>
       ${title}
       <p class="q-snippet">${escapeHtml(q.content)}</p>
       <div class="q-card-foot">
@@ -194,7 +200,7 @@ function buildCards(list) {
         <span class="q-replies">💬 ${q.replyCount || 0} 回复</span>
       </div>`;
     card.addEventListener('click', (e) => {
-      if (e.target.closest('.card-del')) return;
+      if (e.target.closest('.card-admin') || e.target.closest('.card-del')) return;
       location.href = 'question.html?id=' + q.id;
     });
     questionList.appendChild(card);
@@ -204,7 +210,7 @@ function buildCards(list) {
 async function loadQuestions() {
   questionList.innerHTML = '<div class="empty-tip">加载中…</div>';
   try {
-    const list = await apiList({ category: curCat, q: curQ });
+    const list = await apiList({ category: curCat, q: curQ, featured: curFeatured });
     buildCards(list);
   } catch (e) {
     questionList.innerHTML = '<div class="empty-tip">加载失败，请刷新。</div>';
@@ -225,12 +231,60 @@ function renderCats() {
 }
 function setCategory(c) {
   curCat = c;
+  if (curFeatured) { curFeatured = false; featuredBtn.classList.remove('active'); }
   renderCats();
   loadQuestions();
 }
 allBtn.addEventListener('click', () => catDropdown.classList.toggle('hidden'));
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.filter-all')) catDropdown.classList.add('hidden');
+});
+
+// ---------- 精选筛选 ----------
+featuredBtn.addEventListener('click', () => {
+  curFeatured = !curFeatured;
+  featuredBtn.classList.toggle('active', curFeatured);
+  if (curFeatured) catDropdown.classList.add('hidden');
+  loadQuestions();
+});
+
+// ---------- 管理员操作菜单（删除 / 精选 / 取消精选）----------
+let adminTarget = null;
+function openAdminMenu(btn) {
+  const id = btn.dataset.id;
+  const isFeat = btn.dataset.featured === '1';
+  adminTarget = { id, featured: isFeat };
+  adminMenu.innerHTML = '';
+  const del = document.createElement('button');
+  del.className = 'admin-menu-item danger'; del.dataset.act = 'delete'; del.textContent = '🗑 删除';
+  const feat = document.createElement('button');
+  feat.className = 'admin-menu-item'; feat.dataset.act = isFeat ? 'unfeature' : 'feature';
+  feat.textContent = isFeat ? '⭐ 取消精选' : '⭐ 精选';
+  adminMenu.appendChild(del); adminMenu.appendChild(feat);
+  const rect = btn.getBoundingClientRect();
+  adminMenu.style.top = (window.scrollY + rect.bottom + 6) + 'px';
+  adminMenu.style.left = Math.max(8, window.scrollX + rect.right - 168) + 'px';
+  adminMenu.classList.remove('hidden');
+}
+function closeAdminMenu() { adminMenu.classList.add('hidden'); adminTarget = null; }
+adminMenu.addEventListener('click', async (e) => {
+  const act = e.target.dataset.act;
+  if (!act || !adminTarget) return;
+  const { id, featured } = adminTarget;
+  closeAdminMenu();
+  if (act === 'delete') {
+    if (!confirm('管理员操作：确定删除该问题及其全部回复？')) return;
+    await adminDeleteQuestion(id);
+  } else if (act === 'feature') {
+    try { await apiSetFeatured(id, true); showToast('已设为精选'); } catch (err) { showToast(err.message || '操作失败'); }
+    await loadQuestions();
+  } else if (act === 'unfeature') {
+    try { await apiSetFeatured(id, false); showToast('已取消精选'); } catch (err) { showToast(err.message || '操作失败'); }
+    await loadQuestions();
+  }
+});
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#adminMenu') && !e.target.closest('.card-admin')) closeAdminMenu();
 });
 
 // ---------- 提问弹窗 ----------
@@ -354,10 +408,29 @@ async function adminDeleteQuestion(id) {
     await loadQuestions();
   } catch (e) { showToast(e.message || '删除失败'); }
 }
+async function apiSetFeatured(id, val) {
+  if (MODE === 'backend') {
+    const key = localStorage.getItem('yyx_admin') || '';
+    const res = await fetch('/api/admin/questions/' + id, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'x-admin-key': key },
+      body: JSON.stringify({ featured: val }),
+    });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || '操作失败'); }
+    return true;
+  }
+  const arr = getLocal();
+  const q = arr.find((x) => x.id === id);
+  if (q) q.featured = val;
+  setLocal(arr);
+  return true;
+}
 if (adminUnlockBtn) adminUnlockBtn.addEventListener('click', adminUnlock);
 if (adminExit) adminExit.addEventListener('click', exitAdminMode);
 if (adminKeyInput) adminKeyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') adminUnlock(); });
 questionList.addEventListener('click', (e) => {
+  const ab = e.target.closest('.card-admin');
+  if (ab) { e.stopPropagation(); openAdminMenu(ab); return; }
   const btn = e.target.closest('.card-del');
   if (btn) adminDeleteQuestion(btn.dataset.id);
 });

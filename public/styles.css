@@ -153,6 +153,9 @@ body {
 }
 .pill:hover { border-color: var(--brand-2); color: var(--brand); }
 .pill.active { background: var(--brand-soft); color: var(--brand); border-color: var(--brand-2); font-weight: 600; }
+.featured-pill { margin-left: 8px; }
+.featured-pill.active { background: linear-gradient(135deg, #f6c560, #efa83a); color: #5a3d00; border-color: #f0b94e; font-weight: 600; }
+.featured-pill.active:hover { color: #5a3d00; }
 
 /* Feed / cards */
 .feed-head { display: flex; align-items: center; justify-content: space-between; margin: 4px 4px 14px; position: relative; z-index: 5; }
@@ -193,6 +196,28 @@ body {
 .admin-badge { background: #fff3cd; color: #8a6d00; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 999px; border: 1px solid #ffe69b; white-space: nowrap; }
 .card-del { margin-left: auto; border: none; background: transparent; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; padding: 2px 4px; border-radius: 8px; }
 .card-del:hover { background: #fdf2f1; color: var(--danger); }
+.card-admin {
+  margin-left: auto; border: 1px solid var(--line); background: #fff;
+  color: var(--brand); cursor: pointer; font-size: 12px; font-weight: 600;
+  padding: 3px 10px; border-radius: 999px; white-space: nowrap;
+}
+.card-admin:hover { background: var(--brand-soft); }
+.post-topic.featured { background: linear-gradient(135deg, #f6c560, #efa83a); color: #5a3d00; border: 1px solid #f0b94e; font-weight: 600; }
+
+/* 管理员操作弹窗（删除 / 精选 / 取消精选） */
+.admin-menu {
+  position: absolute; z-index: 90; min-width: 160px;
+  background: #fff; border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(44,58,52,.18); padding: 6px; overflow: hidden;
+}
+.admin-menu.hidden { display: none; }
+.admin-menu-item {
+  display: block; width: 100%; text-align: left; border: none; background: transparent;
+  color: var(--ink); font-size: 14px; padding: 10px 12px; border-radius: 8px; cursor: pointer;
+}
+.admin-menu-item:hover { background: var(--brand-soft); }
+.admin-menu-item.danger { color: var(--danger); }
+.admin-menu-item.danger:hover { background: #fdf2f1; }
 
 /* Manage link box */
 .manage-box { margin-top: 12px; background: var(--brand-soft); border: 1px dashed var(--brand-2); border-radius: 12px; padding: 12px; }

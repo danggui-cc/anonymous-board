@@ -108,13 +108,15 @@ async function handleApi(req, res, url) {
   const method = req.method;
   const q = url.searchParams;
 
-  // GET /api/questions?category=&q=&sort=
+  // GET /api/questions?category=&q=&sort=&featured=1
   if (method === 'GET' && parts.length === 2 && parts[1] === 'questions') {
     const cat = (q.get('category') || '全部').trim();
     const kw = (q.get('q') || '').trim().toLowerCase();
     const sort = (q.get('sort') || 'time').trim();
+    const onlyFeatured = q.get('featured') === '1';
     let list = await store.listQuestions();
-    if (cat && cat !== '全部') list = list.filter((p) => p.category === cat);
+    if (onlyFeatured) list = list.filter((p) => p.featured);
+    if (cat && cat !== '全部' && !onlyFeatured) list = list.filter((p) => p.category === cat);
     if (kw) list = list.filter((p) =>
       (p.title || '').toLowerCase().includes(kw) ||
       (p.content || '').toLowerCase().includes(kw));
@@ -129,7 +131,7 @@ async function handleApi(req, res, url) {
     const out = list.map((p) => ({
       id: p.id, title: p.title, content: p.content, category: p.category,
       createdAt: p.createdAt, author: p.author || null,
-      replyCount: rc[p.id] || 0,
+      replyCount: rc[p.id] || 0, featured: !!p.featured,
     }));
     return sendJSON(res, 200, { questions: out, total: out.length, categories: CATEGORIES });
   }
@@ -166,7 +168,7 @@ async function handleApi(req, res, url) {
       quoteId: r.quoteId || null, rootId: r.rootId || null, author: r.author || null,
     }));
     return sendJSON(res, 200, {
-      question: { id: qst.id, title: qst.title, content: qst.content, category: qst.category, createdAt: qst.createdAt, author: qst.author || null },
+      question: { id: qst.id, title: qst.title, content: qst.content, category: qst.category, createdAt: qst.createdAt, author: qst.author || null, featured: !!qst.featured },
       replies,
     });
   }
@@ -226,6 +228,17 @@ async function handleApi(req, res, url) {
     const key = (body && body.key) || '';
     if (key === ADMIN_KEY) return sendJSON(res, 200, { ok: true });
     return sendJSON(res, 401, { error: '管理员口令错误' });
+  }
+
+  // PATCH /api/admin/questions/:id  管理员设置精选（body: { featured: boolean }）
+  if (method === 'PATCH' && parts.length === 4 && parts[1] === 'admin' && parts[2] === 'questions') {
+    const key = req.headers['x-admin-key'] || '';
+    if (key !== ADMIN_KEY) return sendJSON(res, 401, { error: '未授权：管理员口令不正确' });
+    let body; try { body = await readBody(req); } catch (e) { return sendJSON(res, 400, { error: '请求格式错误' }); }
+    if (typeof body.featured !== 'boolean') return sendJSON(res, 400, { error: '缺少 featured 字段（boolean）' });
+    const r = await store.setFeatured(parts[3], body.featured);
+    if (!r.ok) return sendJSON(res, r.code, { error: '问题不存在' });
+    return sendJSON(res, 200, { message: '已更新精选状态' });
   }
 
   // DELETE /api/admin/questions/:id  管理员删除问题（连带回复）

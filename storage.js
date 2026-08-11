@@ -221,6 +221,27 @@ const store = {
     return { ok: true };
   },
 
+  // 设置问题精选状态（管理员）。val 为 boolean
+  async setFeatured(id, val) {
+    if (await probeTcbHealth()) {
+      try {
+        const db = getDB();
+        const res = await withTimeout(db.collection('questions').doc(id).get(), 8000, 'setFeatured.get');
+        if (!(res.data && res.data[0])) return { ok: false, code: 404 };
+        await withTimeout(db.collection('questions').doc(id).update({ featured: !!val }), 8000, 'setFeatured.update');
+        return { ok: true };
+      } catch (e) {
+        console.warn('[storage] setFeatured tcb 失败，本次降级 file:', e && e.message);
+      }
+    }
+    const s = readStore();
+    const q = s.questions.find((p) => p.id === id);
+    if (!q) return { ok: false, code: 404 };
+    q.featured = !!val;
+    writeStore(s);
+    return { ok: true };
+  },
+
   async listReplies(questionId) {
     if (await probeTcbHealth()) {
       try {

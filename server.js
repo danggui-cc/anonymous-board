@@ -11,8 +11,8 @@
  * 全部匿名；问题/回复均凭私密令牌删除（支持跨设备，通过管理链接）。
  * 字段存储为原始文本，XSS 防护在前端渲染时做转义。
  *
- * 存储：本地用 data/data.json（文件模式）；部署到腾讯云 CloudBase 时自动切到
- * 自带云数据库（tcb 模式）。见 storage.js。
+ * 存储：本地用 data/data.json（文件模式）；部署到腾讯云 CloudBase 云托管时，
+ * 配置 MONGODB_URI 即自动切到腾讯云 MongoDB（mongo 模式）。见 storage.js。
  */
 
 const http = require('http');

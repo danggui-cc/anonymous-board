@@ -4,108 +4,75 @@
  * 欲言信箱 —— 存储层
  *
  * 支持两种后端（自动选择）：
- *  1) LeanCloud（国内免费 BaaS，推荐用于生产部署）
- *     - 当环境变量同时配置了 LEANCLOUD_APP_ID 与 LEANCLOUD_APP_KEY 时启用
- *     - 数据存于 LeanCloud 云端，所有浏览器/设备共享，重启/重部署不丢
+ *  1) MongoDB（腾讯云 TencentDB for MongoDB，推荐用于生产部署）
+ *     - 当环境变量配置了 MONGODB_URI 时启用
+ *     - 数据存于云端 MongoDB，所有浏览器/设备共享，重启/重部署不丢
+ *     - 必须与 CloudBase 云托管【同地域】，并通过云托管「内网互联」打通 VPC，
+ *       容器才能用内网地址直连（公网/境外地址在容器里被墙或不可达）
  *  2) 本地文件模式（file，兜底 / 本地开发）
  *     - 数据写在 DATA_DIR/data.json，仅本机可见，重部署容器会丢
  *
- * 为什么不用 MongoDB Atlas：从腾讯云 CloudBase 容器直连 AWS 上的 Atlas 数据节点
- * （*.mongodb.net）被网络层拦截（DNS 解析失败 + TLS 握手告警），实测不可用。
- * LeanCloud 为国内服务商，从 CloudBase 容器可正常连通。
+ * 放弃的方案（仅作记录，勿回退）：
+ *  - LeanCloud 国内版：已停止新用户注册、即将下线。
+ *  - MongoDB Atlas（AWS 境外）：从 CloudBase 容器直连 *.mongodb.net 被网络层拦截
+ *    （DNS 解析失败 + TLS 握手告警），实测不可用。
+ *  - CloudBase 自带云数据库 / @cloudbase/node-sdk：云托管默认不注入凭据
+ *    （TCB_ENV 等全 false），node-sdk 无法初始化，走不通。
+ *  => 唯一又稳又不被墙的路：腾讯云境内 MongoDB + 云托管内网互联。
  */
 
 const fs = require('fs');
 const path = require('path');
+const { MongoClient } = require('mongodb');
 
 // ---------- 模式选择 ----------
-const LC_APP_ID = process.env.LEANCLOUD_APP_ID;
-const LC_APP_KEY = process.env.LEANCLOUD_APP_KEY; // 此处用 Master Key（服务端）
-const LC_API_BASE = (process.env.LEANCLOUD_API || 'https://api.leancloud.cn').replace(/\/+$/, '');
-
-const MODE = (LC_APP_ID && LC_APP_KEY) ? 'lc' : 'file';
+const MONGO_URI = process.env.MONGODB_URI || '';
+const MONGO_DB = process.env.MONGODB_DB || 'yuyan'; // 业务库名（与连接串中的认证库无关）
 const EXPLICIT_STORAGE = process.env.STORAGE || '';
+
+const MODE = (EXPLICIT_STORAGE === 'file')
+  ? 'file'
+  : (MONGO_URI ? 'mongo' : 'file');
 
 // 文件模式路径
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
 
 // ===================================================================
-//  LeanCloud 后端（国内免费 BaaS）
+//  MongoDB 后端（腾讯云 TencentDB for MongoDB，境内 + 内网互联）
 // ===================================================================
 
-function lcHeaders() {
-  return {
-    'X-LC-Id': LC_APP_ID,
-    'X-LC-Key': `${LC_APP_KEY},master`, // 服务端使用 Master Key，绕过 ACL
-    'Content-Type': 'application/json',
-  };
+let _client = null;
+let _db = null;
+let _connecting = null;
+
+async function getDb() {
+  if (_db) return _db;
+  if (_connecting) return _connecting.then(() => _db);
+  if (!MONGO_URI) throw new Error('MONGODB_URI 未配置，无法使用 mongo 模式');
+  _connecting = (async () => {
+    const client = new MongoClient(MONGO_URI, {
+      serverSelectionTimeoutMS: 8000,
+      socketTimeoutMS: 15000,
+      maxPoolSize: 10,
+    });
+    await client.connect();
+    _db = client.db(MONGO_DB);
+    _connecting = null;
+    return _db;
+  })();
+  return _connecting;
 }
 
-async function lcFetch(method, pathname, body) {
-  const url = LC_API_BASE + '/1.1' + pathname;
-  const opts = { method, headers: lcHeaders(), signal: AbortSignal.timeout(15000) };
-  if (body !== undefined) opts.body = JSON.stringify(body);
-  const r = await fetch(url, opts);
-  const text = await r.text();
-  let data;
-  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-  if (!r.ok) {
-    const err = new Error(`LeanCloud ${r.status}: ${data.error || text}`);
-    err.status = r.status; err.lc = data;
-    throw err;
-  }
-  return data;
-}
-
-async function lcQuery(className, where, order, limit = 1000) {
-  const params = new URLSearchParams();
-  if (where) params.set('where', JSON.stringify(where));
-  if (order) params.set('order', order);
-  params.set('limit', String(limit));
-  const d = await lcFetch('GET', `/classes/${className}?${params.toString()}`);
-  return d.results || [];
-}
-
-// 分页拉取全部（LeanCloud 单次最多 1000 条）
-async function lcQueryAll(className, where, order) {
-  const out = [];
-  let skip = 0;
-  const LIMIT = 1000;
-  for (;;) {
-    const params = new URLSearchParams();
-    if (where) params.set('where', JSON.stringify(where));
-    if (order) params.set('order', order);
-    params.set('limit', String(LIMIT));
-    params.set('skip', String(skip));
-    const d = await lcFetch('GET', `/classes/${className}?${params.toString()}`);
-    const arr = d.results || [];
-    out.push(...arr);
-    if (arr.length < LIMIT) break;
-    skip += LIMIT;
-  }
-  return out;
-}
-
-async function lcCreate(className, fields) {
-  const d = await lcFetch('POST', `/classes/${className}`, fields);
-  return d.objectId;
-}
-async function lcUpdate(className, objectId, fields) {
-  await lcFetch('PUT', `/classes/${className}/${objectId}`, fields);
-}
-async function lcDelete(className, objectId) {
-  await lcFetch('DELETE', `/classes/${className}/${objectId}`);
-}
-async function lcGetByOurId(className, ourId) {
-  const arr = await lcQuery(className, { ourId }, undefined, 1);
-  return arr[0] || null;
+async function col(name) {
+  const db = await getDb();
+  return db.collection(name);
 }
 
 function mapQuestion(q) {
   if (!q) return null;
   return {
-    id: q.ourId,
+    id: q._id,
     title: q.title || '',
     content: q.content || '',
     category: q.category || '其他',
@@ -119,7 +86,7 @@ function mapQuestion(q) {
 function mapReply(r) {
   if (!r) return null;
   return {
-    id: r.ourId,
+    id: r._id,
     questionId: r.questionId,
     content: r.content || '',
     createdAt: r.createdAt || 0,
@@ -131,26 +98,30 @@ function mapReply(r) {
   };
 }
 
-const lcStore = {
+const mongoStore = {
   async init() {
     // 轻量探活：能连通即记录，失败仅告警，不影响进程
     try {
-      await lcQuery('Question', undefined, undefined, 1);
-      console.log('[storage] LeanCloud 连接成功（模式 lc）');
+      const db = await getDb();
+      await db.command({ ping: 1 });
+      console.log('[storage] MongoDB 连接成功（模式 mongo）');
     } catch (e) {
-      console.error('[storage] LeanCloud 探活失败（仅告警，进程继续）:', e && e.message);
+      console.error('[storage] MongoDB 探活失败（仅告警，进程继续）:', e && e.message);
     }
   },
   async listQuestions() {
-    const arr = await lcQueryAll('Question', undefined, '-createdAt');
+    const c = await col('questions');
+    const arr = await c.find({}).sort({ createdAt: -1 }).toArray();
     return arr.map(mapQuestion);
   },
   async getQuestion(id) {
-    return mapQuestion(await lcGetByOurId('Question', id));
+    const c = await col('questions');
+    return mapQuestion(await c.findOne({ _id: id }));
   },
   async createQuestion(q) {
-    await lcCreate('Question', {
-      ourId: q.id,
+    const c = await col('questions');
+    await c.insertOne({
+      _id: q.id,
       title: q.title || '',
       content: q.content || '',
       category: q.category || '其他',
@@ -163,29 +134,33 @@ const lcStore = {
     return q;
   },
   async deleteQuestion(id, token) {
-    const q = await lcGetByOurId('Question', id);
+    const c = await col('questions');
+    const q = await c.findOne({ _id: id });
     if (!q) return { ok: false, code: 404 };
     if (q.deleteToken !== token) return { ok: false, code: 403 };
-    const reps = await lcQueryAll('Reply', { questionId: id });
-    for (const r of reps) await lcDelete('Reply', r.objectId);
-    await lcDelete('Question', q.objectId);
+    const rc = await col('replies');
+    await rc.deleteMany({ questionId: id });
+    await c.deleteOne({ _id: id });
     return { ok: true };
   },
   async adminDeleteQuestion(id) {
-    const q = await lcGetByOurId('Question', id);
+    const c = await col('questions');
+    const q = await c.findOne({ _id: id });
     if (!q) return { ok: false, code: 404 };
-    const reps = await lcQueryAll('Reply', { questionId: id });
-    for (const r of reps) await lcDelete('Reply', r.objectId);
-    await lcDelete('Question', q.objectId);
+    const rc = await col('replies');
+    await rc.deleteMany({ questionId: id });
+    await c.deleteOne({ _id: id });
     return { ok: true };
   },
   async listReplies(qid) {
-    const arr = await lcQueryAll('Reply', { questionId: qid }, 'createdAt');
+    const c = await col('replies');
+    const arr = await c.find({ questionId: qid }).sort({ createdAt: 1 }).toArray();
     return arr.map(mapReply);
   },
   async createReply(r) {
-    await lcCreate('Reply', {
-      ourId: r.id,
+    const c = await col('replies');
+    await c.insertOne({
+      _id: r.id,
       questionId: r.questionId,
       content: r.content || '',
       createdAt: r.createdAt || Date.now(),
@@ -198,26 +173,30 @@ const lcStore = {
     return r;
   },
   async deleteReply(id, token) {
-    const r = await lcGetByOurId('Reply', id);
+    const c = await col('replies');
+    const r = await c.findOne({ _id: id });
     if (!r) return { ok: false, code: 404 };
     if (r.deleteToken !== token) return { ok: false, code: 403 };
-    await lcDelete('Reply', r.objectId);
+    await c.deleteOne({ _id: id });
     return { ok: true };
   },
   async adminDeleteReply(id) {
-    const r = await lcGetByOurId('Reply', id);
+    const c = await col('replies');
+    const r = await c.findOne({ _id: id });
     if (!r) return { ok: false, code: 404 };
-    await lcDelete('Reply', r.objectId);
+    await c.deleteOne({ _id: id });
     return { ok: true };
   },
   async setFeatured(id, val) {
-    const q = await lcGetByOurId('Question', id);
+    const c = await col('questions');
+    const q = await c.findOne({ _id: id });
     if (!q) return { ok: false, code: 404 };
-    await lcUpdate('Question', q.objectId, { featured: !!val });
+    await c.updateOne({ _id: id }, { $set: { featured: !!val } });
     return { ok: true };
   },
   async replyCounts() {
-    const arr = await lcQueryAll('Reply');
+    const c = await col('replies');
+    const arr = await c.find({}, { projection: { questionId: 1 } }).toArray();
     const counts = {};
     for (const r of arr) {
       if (r.questionId) counts[r.questionId] = (counts[r.questionId] || 0) + 1;
@@ -225,41 +204,51 @@ const lcStore = {
     return counts;
   },
   async createUser(u) {
-    const existing = await lcGetByOurId('Account', u.id);
+    const c = await col('accounts');
+    const existing = await c.findOne({ _id: u.id });
     if (existing) return { existed: true };
-    await lcCreate('Account', { ourId: u.id, salt: u.salt, pwdHash: u.pwdHash });
+    await c.insertOne({ _id: u.id, salt: u.salt, pwdHash: u.pwdHash });
     return { existed: false };
   },
   async getUserSalt(id) {
-    const a = await lcGetByOurId('Account', id);
+    const c = await col('accounts');
+    const a = await c.findOne({ _id: id }, { projection: { salt: 1 } });
     return a ? a.salt : null;
   },
   async verifyUser(id, pwdHash) {
-    const a = await lcGetByOurId('Account', id);
+    const c = await col('accounts');
+    const a = await c.findOne({ _id: id });
     return !!a && a.pwdHash === pwdHash;
   },
   async listMyQuestions(ownerId) {
-    const arr = await lcQueryAll('Question', { ownerId }, '-createdAt');
+    const c = await col('questions');
+    const arr = await c.find({ ownerId }).sort({ createdAt: -1 }).toArray();
     return arr.map(mapQuestion);
   },
   async listMyReplies(ownerId) {
-    const arr = await lcQueryAll('Reply', { ownerId }, '-createdAt');
+    const c = await col('replies');
+    const arr = await c.find({ ownerId }).sort({ createdAt: -1 }).toArray();
     return arr.map(mapReply);
   },
   async debug() {
-    const info = { MODE, EXPLICIT_STORAGE, mode: MODE, lcConfigured: !!(LC_APP_ID && LC_APP_KEY) };
-    if (MODE === 'lc') {
+    const info = {
+      MODE, EXPLICIT_STORAGE, mode: MODE,
+      mongoConfigured: !!MONGO_URI,
+      mongoDb: MONGO_DB,
+    };
+    if (MODE === 'mongo') {
       try {
-        const arr = await lcQuery('Question', undefined, undefined, 1);
-        const sample = await lcQuery('Reply', undefined, undefined, 1);
-        info.lc = {
+        const db = await getDb();
+        await db.command({ ping: 1 });
+        const qc = await col('questions');
+        const rc = await col('replies');
+        info.mongo = {
           ok: true,
-          questionCountSample: arr.length,
-          replyCountSample: sample.length,
-          apiBase: LC_API_BASE,
+          questionCount: await qc.countDocuments({}),
+          replyCount: await rc.countDocuments({}),
         };
       } catch (e) {
-        info.lc = { ok: false, name: e && e.name, status: e && e.status, message: e && e.message };
+        info.mongo = { ok: false, name: e && e.name, message: e && e.message };
       }
     }
     return info;
@@ -398,7 +387,7 @@ const fileStore = {
 };
 
 // ---------- 导出 ----------
-const store = MODE === 'lc' ? lcStore : fileStore;
+const store = MODE === 'mongo' ? mongoStore : fileStore;
 store.mode = MODE;
-store.init = MODE === 'lc' ? lcStore.init : fileStore.init;
+store.init = MODE === 'mongo' ? mongoStore.init : fileStore.init;
 module.exports = store;

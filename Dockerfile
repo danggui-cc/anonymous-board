@@ -1,18 +1,15 @@
 # 欲言信箱 —— 匿名提问箱容器镜像
-# 用法示例（本地）：
-#   docker build -t yuyan-mailbox .
-#   docker run -p 3000:3000 -e ADMIN_KEY=你的强口令 -v yuyan-data:/data yuyan-mailbox
 #
 # 部署到腾讯云 CloudBase 云托管时：
-#   - 在控制台环境变量设置 LEANCLOUD_APP_ID 与 LEANCLOUD_APP_KEY（Master Key）
-#     即自动走 LeanCloud 模式，数据存于国内云端，所有浏览器/设备共享、重部署不丢
-#   - 未设置这两项时回退到本地文件模式（STORAGE=file，仅本机可见，重部署会丢）
+#   - 在控制台环境变量设置 MONGODB_URI（腾讯云 MongoDB 内网连接串）
+#     即自动走 mongo 模式，数据存于云端，所有浏览器/设备共享、重部署不丢
+#   - 未设置 MONGODB_URI 时回退到本地文件模式（仅本机可见，重部署会丢）
 
 FROM node:18-slim
 
 WORKDIR /app
 
-# 安装依赖（本镜像使用内置 fetch 访问 LeanCloud，无需额外 npm 依赖）
+# 安装依赖（mongodb 官方驱动，纯 JS 实现，无需 native 编译）
 COPY package.json ./
 RUN npm install --production
 
@@ -22,8 +19,7 @@ COPY public ./public
 
 ENV PORT=3000
 ENV NODE_ENV=production
-# 默认本地文件兜底；若容器环境变量设置了 LEANCLOUD_APP_ID + LEANCLOUD_APP_KEY，
-# storage.js 会自动切到 LeanCloud 模式。
+# 默认本地文件兜底；若容器环境变量设置了 MONGODB_URI，storage.js 会自动切到 mongo 模式。
 
 # 创建数据目录并允许写入（部分云环境要求，文件模式用）
 RUN mkdir -p /data && chmod 777 /data

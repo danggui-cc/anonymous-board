@@ -395,7 +395,11 @@ const fileStore = {
       .sort((a, b) => b.createdAt - a.createdAt);
   },
   async debug() {
-    return { MODE, EXPLICIT_STORAGE, mode: MODE, file: DATA_FILE };
+    return {
+      MODE, EXPLICIT_STORAGE, mode: MODE,
+      cosConfigured: !!(COS_SECRET_ID && COS_SECRET_KEY && COS_BUCKET),
+      file: DATA_FILE,
+    };
   },
 };
 

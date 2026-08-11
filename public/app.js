@@ -42,6 +42,8 @@ const askCloseBtn = $('#askCloseBtn');
 const notifBtn = $('#notifBtn');
 const notifPanel = $('#notifPanel');
 const notifBadge = $('#notifBadge');
+const menuBtn = $('#menuBtn');
+const headerMenu = $('#headerMenu');
 
 // ---------- 存储 ----------
 function getTokens() { try { return JSON.parse(localStorage.getItem(TOKEN_KEY)) || {}; } catch (e) { return {}; } }
@@ -153,6 +155,20 @@ notifBtn.addEventListener('click', (e) => {
 });
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.notif-wrap')) notifPanel.classList.add('hidden');
+});
+
+// ---------- 汉堡菜单（收起管理/通知/模式标识）----------
+menuBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const willShow = headerMenu.classList.contains('hidden');
+  headerMenu.classList.toggle('hidden');
+  menuBtn.setAttribute('aria-expanded', String(willShow));
+});
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#headerMenu') && !e.target.closest('#menuBtn')) {
+    headerMenu.classList.add('hidden');
+    menuBtn.setAttribute('aria-expanded', 'false');
+  }
 });
 
 // ---------- 数据访问（双模式）----------

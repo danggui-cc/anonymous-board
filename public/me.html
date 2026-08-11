@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>个人中心 · 欲言信箱</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📮</text></svg>" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site-header detail-header">
+    <div class="header-inner">
+      <a href="index.html" class="back-link">← 回到首页</a>
+      <div class="brand small">
+        <span class="brand-emoji">📮</span>
+        <h1>欲言信箱</h1>
+      </div>
+    </div>
+  </header>
+
+  <main class="container me-container">
+    <h2 class="me-title">个人中心</h2>
+
+    <div class="me-tabs" id="meTabs">
+      <button class="me-tab" data-tab="notifications">消息通知</button>
+      <button class="me-tab" data-tab="questions">我的提问</button>
+      <button class="me-tab" data-tab="replies">我的留言</button>
+      <button class="me-tab" data-tab="identity">我的身份</button>
+      <button class="me-tab" data-tab="admin">管理员</button>
+    </div>
+
+    <section id="panel-notifications" class="me-panel">
+      <div id="notifList" class="me-list"></div>
+    </section>
+
+    <section id="panel-questions" class="me-panel hidden">
+      <div id="myQuestionsList" class="me-list"></div>
+    </section>
+
+    <section id="panel-replies" class="me-panel hidden">
+      <div id="myRepliesList" class="me-list"></div>
+    </section>
+
+    <section id="panel-identity" class="me-panel hidden">
+      <div class="identity-block card">
+        <div class="identity-title">我的身份<span class="identity-sub">（跨设备找回）</span></div>
+        <div id="uidRow" class="uid-row">
+          <span class="uid-label">身份 ID</span>
+          <code id="uidValue" class="uid-value"></code>
+          <button id="uidCopy" class="ghost-btn tiny">复制</button>
+        </div>
+        <div class="identity-actions">
+          <button id="setPwdBtn" class="ghost-btn small">设置密码</button>
+          <button id="recoverBtn" class="ghost-btn small">恢复身份</button>
+        </div>
+        <div id="setPwdPanel" class="identity-form hidden">
+          <input id="setPwdInput" class="admin-input" type="password" placeholder="设置密码（≥4 位，用于找回）" />
+          <button id="setPwdConfirm" class="ghost-btn small">保存</button>
+        </div>
+        <div id="recoverPanel" class="identity-form hidden">
+          <input id="recUidInput" class="admin-input" type="text" placeholder="身份 ID" />
+          <input id="recPwdInput" class="admin-input" type="password" placeholder="密码" />
+          <button id="recConfirm" class="ghost-btn small">恢复</button>
+        </div>
+        <div id="identityMsg" class="identity-msg"></div>
+      </div>
+    </section>
+
+    <section id="panel-admin" class="me-panel hidden">
+      <div class="card">
+        <div id="adminPanel" class="admin-panel-row locked">
+          <span class="admin-label">管理员口令</span>
+          <input id="adminKeyInput" class="admin-input" type="password" placeholder="输入口令" />
+          <button id="adminUnlock" class="ghost-btn small">解锁</button>
+          <button id="adminExit" class="ghost-btn small hidden">退出</button>
+        </div>
+        <p id="adminHint" class="admin-hint">解锁后，首页的问题卡片右上角会显示 🛡 删除按钮。</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>💬手作人格IP成长营·欲言信箱</p>
+  </footer>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="identity.js"></script>
+  <script src="me.js"></script>
+</body>
+</html>

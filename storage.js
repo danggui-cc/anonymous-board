@@ -3,441 +3,402 @@
 /**
  * 欲言信箱 —— 存储层
  *
- *  模式：
- *   - 文件模式（file）：本地 / 无云环境时使用，数据写入 data/data.json
- *   - MongoDB 模式（mongo）：部署到云容器（CloudBase / 任意平台）时使用，
- *     连接 MongoDB Atlas 免费集群，数据持久、跨设备共享、重启不丢。
+ * 支持两种后端（自动选择）：
+ *  1) LeanCloud（国内免费 BaaS，推荐用于生产部署）
+ *     - 当环境变量同时配置了 LEANCLOUD_APP_ID 与 LEANCLOUD_APP_KEY 时启用
+ *     - 数据存于 LeanCloud 云端，所有浏览器/设备共享，重启/重部署不丢
+ *  2) 本地文件模式（file，兜底 / 本地开发）
+ *     - 数据写在 DATA_DIR/data.json，仅本机可见，重部署容器会丢
  *
- *  模式选择（优先级从高到低）：
- *   - 显式环境变量 STORAGE=file | mongo
- *   - 若设置了 MONGODB_URI，自动走 mongo（Atlas 连接串）
- *   - 否则走 file 兜底
- *
- *  说明：曾尝试 CloudBase 自带云数据库（tcb），但免费体验版不提供可用数据库，
- *  故改为 MongoDB Atlas（免费 M0 集群），从容器内可直连。
- *
- *  对外全部为 async 方法，server.js 无需关心底层实现。
+ * 为什么不用 MongoDB Atlas：从腾讯云 CloudBase 容器直连 AWS 上的 Atlas 数据节点
+ * （*.mongodb.net）被网络层拦截（DNS 解析失败 + TLS 握手告警），实测不可用。
+ * LeanCloud 为国内服务商，从 CloudBase 容器可正常连通。
  */
 
 const fs = require('fs');
 const path = require('path');
 
+// ---------- 模式选择 ----------
+const LC_APP_ID = process.env.LEANCLOUD_APP_ID;
+const LC_APP_KEY = process.env.LEANCLOUD_APP_KEY; // 此处用 Master Key（服务端）
+const LC_API_BASE = (process.env.LEANCLOUD_API || 'https://api.leancloud.cn').replace(/\/+$/, '');
+
+const MODE = (LC_APP_ID && LC_APP_KEY) ? 'lc' : 'file';
+const EXPLICIT_STORAGE = process.env.STORAGE || '';
+
+// 文件模式路径
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
-const USERS_FILE = path.join(DATA_DIR, 'users.json');
 
-// ---------------- 模式选择 ----------------
-function detectMode() {
-  if (process.env.STORAGE === 'file') return 'file';
-  if (process.env.STORAGE === 'mongo') return 'mongo';
-  if (process.env.MONGODB_URI) return 'mongo';
-  return 'file';
-}
-const MODE = detectMode();
-const EXPLICIT_STORAGE = !!process.env.STORAGE;
-// mongo/file 都是共享或本地存储，失败不应静默降级到另一个（避免数据分片/丢失）。
-function allowFallback() {
-  if (MODE === 'mongo' || MODE === 'file') return false;
-  return true;
+// ===================================================================
+//  LeanCloud 后端（国内免费 BaaS）
+// ===================================================================
+
+function lcHeaders() {
+  return {
+    'X-LC-Id': LC_APP_ID,
+    'X-LC-Key': `${LC_APP_KEY},master`, // 服务端使用 Master Key，绕过 ACL
+    'Content-Type': 'application/json',
+  };
 }
 
-// ================= 文件模式（本地兜底） =================
-function ensureStore() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(DATA_FILE)) {
-    fs.writeFileSync(DATA_FILE, JSON.stringify({ questions: [], replies: [] }, null, 2));
+async function lcFetch(method, pathname, body) {
+  const url = LC_API_BASE + '/1.1' + pathname;
+  const opts = { method, headers: lcHeaders(), signal: AbortSignal.timeout(15000) };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const r = await fetch(url, opts);
+  const text = await r.text();
+  let data;
+  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+  if (!r.ok) {
+    const err = new Error(`LeanCloud ${r.status}: ${data.error || text}`);
+    err.status = r.status; err.lc = data;
+    throw err;
   }
+  return data;
 }
-function readStore() {
-  ensureStore();
-  try {
-    const s = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    if (!Array.isArray(s.questions)) s.questions = [];
-    if (!Array.isArray(s.replies)) s.replies = [];
-    return s;
-  } catch (e) {
-    return { questions: [], replies: [] };
+
+async function lcQuery(className, where, order, limit = 1000) {
+  const params = new URLSearchParams();
+  if (where) params.set('where', JSON.stringify(where));
+  if (order) params.set('order', order);
+  params.set('limit', String(limit));
+  const d = await lcFetch('GET', `/classes/${className}?${params.toString()}`);
+  return d.results || [];
+}
+
+// 分页拉取全部（LeanCloud 单次最多 1000 条）
+async function lcQueryAll(className, where, order) {
+  const out = [];
+  let skip = 0;
+  const LIMIT = 1000;
+  for (;;) {
+    const params = new URLSearchParams();
+    if (where) params.set('where', JSON.stringify(where));
+    if (order) params.set('order', order);
+    params.set('limit', String(LIMIT));
+    params.set('skip', String(skip));
+    const d = await lcFetch('GET', `/classes/${className}?${params.toString()}`);
+    const arr = d.results || [];
+    out.push(...arr);
+    if (arr.length < LIMIT) break;
+    skip += LIMIT;
   }
-}
-function writeStore(store) {
-  ensureStore();
-  fs.writeFileSync(DATA_FILE, JSON.stringify(store, null, 2));
-}
-function readUsers() {
-  ensureStore();
-  try { const s = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); return Array.isArray(s) ? s : []; }
-  catch (e) { return []; }
-}
-function writeUsers(arr) { ensureStore(); fs.writeFileSync(USERS_FILE, JSON.stringify(arr, null, 2)); }
-
-const fileBackend = {
-  async init() { ensureStore(); },
-  async listQuestions() { return readStore().questions.slice(); },
-  async getQuestion(id) { return readStore().questions.find((p) => p.id === id) || null; },
-  async createQuestion(q) {
-    const s = readStore();
-    s.questions.push(q);
-    writeStore(s);
-    return q;
-  },
-  async deleteQuestion(id, token) {
-    const s = readStore();
-    const idx = s.questions.findIndex((p) => p.id === id);
-    if (idx === -1) return { ok: false, code: 404 };
-    if (s.questions[idx].deleteToken !== token) return { ok: false, code: 403 };
-    s.replies = s.replies.filter((r) => r.questionId !== id);
-    s.questions.splice(idx, 1);
-    writeStore(s);
-    return { ok: true };
-  },
-  async adminDeleteQuestion(id) {
-    const s = readStore();
-    const idx = s.questions.findIndex((p) => p.id === id);
-    if (idx === -1) return { ok: false, code: 404 };
-    s.replies = s.replies.filter((r) => r.questionId !== id);
-    s.questions.splice(idx, 1);
-    writeStore(s);
-    return { ok: true };
-  },
-  async setFeatured(id, val) {
-    const s = readStore();
-    const q = s.questions.find((p) => p.id === id);
-    if (!q) return { ok: false, code: 404 };
-    q.featured = !!val;
-    writeStore(s);
-    return { ok: true };
-  },
-  async listReplies(questionId) {
-    return readStore().replies
-      .filter((r) => r.questionId === questionId)
-      .sort((a, b) => a.createdAt - b.createdAt);
-  },
-  async createReply(reply) {
-    const s = readStore();
-    s.replies.push(reply);
-    writeStore(s);
-    return reply;
-  },
-  async deleteReply(id, token) {
-    const s = readStore();
-    const idx = s.replies.findIndex((r) => r.id === id);
-    if (idx === -1) return { ok: false, code: 404 };
-    if (s.replies[idx].deleteToken !== token) return { ok: false, code: 403 };
-    s.replies.splice(idx, 1);
-    writeStore(s);
-    return { ok: true };
-  },
-  async adminDeleteReply(id) {
-    const s = readStore();
-    const idx = s.replies.findIndex((r) => r.id === id);
-    if (idx === -1) return { ok: false, code: 404 };
-    s.replies.splice(idx, 1);
-    writeStore(s);
-    return { ok: true };
-  },
-  async replyCounts() {
-    const s = readStore();
-    const rc = {};
-    s.replies.forEach((r) => { rc[r.questionId] = (rc[r.questionId] || 0) + 1; });
-    return rc;
-  },
-  async listAllReplies() { return readStore().replies.slice(); },
-  async createUser(user) {
-    const arr = readUsers();
-    if (arr.find((u) => u.id === user.id)) return { ok: true, existed: true };
-    arr.push(user); writeUsers(arr);
-    return { ok: true, existed: false };
-  },
-  async getUserSalt(id) {
-    const u = readUsers().find((x) => x.id === id);
-    return u ? u.salt : null;
-  },
-  async verifyUser(id, pwdHash) {
-    const u = readUsers().find((x) => x.id === id);
-    return !!(u && u.pwdHash === pwdHash);
-  },
-};
-
-// ================= MongoDB 模式（Atlas 免费集群） =================
-let _mongo = null;
-let _mongoHealthy = null;
-
-async function getMongo() {
-  if (_mongo) return _mongo;
-  const { MongoClient } = require('mongodb');
-  const uri = process.env.MONGODB_URI;
-  if (!uri) throw new Error('MONGODB_URI 未配置');
-  const client = new MongoClient(uri, {
-    serverSelectionTimeoutMS: 8000,
-    maxPoolSize: 10,
-    // 兼容部分云容器出口的 TLS 拦截网关：跳过对端证书校验，
-    // 否则握手会报 "tlsv1 alert internal error" 导致连不上 Atlas。
-    tlsAllowInvalidCertificates: true,
-  });
-  await client.connect();
-  const db = client.db(process.env.MONGODB_DB || 'yuyan');
-  _mongo = { client, db };
-  return _mongo;
+  return out;
 }
 
-const mongoBackend = {
+async function lcCreate(className, fields) {
+  const d = await lcFetch('POST', `/classes/${className}`, fields);
+  return d.objectId;
+}
+async function lcUpdate(className, objectId, fields) {
+  await lcFetch('PUT', `/classes/${className}/${objectId}`, fields);
+}
+async function lcDelete(className, objectId) {
+  await lcFetch('DELETE', `/classes/${className}/${objectId}`);
+}
+async function lcGetByOurId(className, ourId) {
+  const arr = await lcQuery(className, { ourId }, undefined, 1);
+  return arr[0] || null;
+}
+
+function mapQuestion(q) {
+  if (!q) return null;
+  return {
+    id: q.ourId,
+    title: q.title || '',
+    content: q.content || '',
+    category: q.category || '其他',
+    createdAt: q.createdAt || 0,
+    deleteToken: q.deleteToken || '',
+    author: q.author || null,
+    ownerId: q.ownerId || '',
+    featured: !!q.featured,
+  };
+}
+function mapReply(r) {
+  if (!r) return null;
+  return {
+    id: r.ourId,
+    questionId: r.questionId,
+    content: r.content || '',
+    createdAt: r.createdAt || 0,
+    quoteId: r.quoteId || null,
+    rootId: r.rootId || null,
+    author: r.author || null,
+    deleteToken: r.deleteToken || '',
+    ownerId: r.ownerId || '',
+  };
+}
+
+const lcStore = {
   async init() {
+    // 轻量探活：能连通即记录，失败仅告警，不影响进程
     try {
-      const { db } = await getMongo();
-      await db.command({ ping: 1 });
-      _mongoHealthy = true;
-      console.log('[storage] MongoDB 连接成功 (mode=mongo)');
+      await lcQuery('Question', undefined, undefined, 1);
+      console.log('[storage] LeanCloud 连接成功（模式 lc）');
     } catch (e) {
-      _mongoHealthy = false;
-      console.error('[storage] MongoDB 连接失败:', e && e.message);
+      console.error('[storage] LeanCloud 探活失败（仅告警，进程继续）:', e && e.message);
     }
   },
   async listQuestions() {
-    const { db } = await getMongo();
-    return await db.collection('questions').find({}, { projection: { _id: 0 } }).toArray();
+    const arr = await lcQueryAll('Question', undefined, '-createdAt');
+    return arr.map(mapQuestion);
   },
   async getQuestion(id) {
-    const { db } = await getMongo();
-    return await db.collection('questions').findOne({ id }, { projection: { _id: 0 } });
+    return mapQuestion(await lcGetByOurId('Question', id));
   },
   async createQuestion(q) {
-    const { db } = await getMongo();
-    await db.collection('questions').insertOne({ ...q });
+    await lcCreate('Question', {
+      ourId: q.id,
+      title: q.title || '',
+      content: q.content || '',
+      category: q.category || '其他',
+      createdAt: q.createdAt || Date.now(),
+      deleteToken: q.deleteToken || '',
+      author: q.author || null,
+      ownerId: q.ownerId || '',
+      featured: false,
+    });
     return q;
   },
   async deleteQuestion(id, token) {
-    const { db } = await getMongo();
-    const q = await db.collection('questions').findOne({ id });
+    const q = await lcGetByOurId('Question', id);
     if (!q) return { ok: false, code: 404 };
     if (q.deleteToken !== token) return { ok: false, code: 403 };
-    await db.collection('questions').deleteOne({ id });
-    await db.collection('replies').deleteMany({ questionId: id });
+    const reps = await lcQueryAll('Reply', { questionId: id });
+    for (const r of reps) await lcDelete('Reply', r.objectId);
+    await lcDelete('Question', q.objectId);
     return { ok: true };
   },
   async adminDeleteQuestion(id) {
-    const { db } = await getMongo();
-    const q = await db.collection('questions').findOne({ id });
+    const q = await lcGetByOurId('Question', id);
     if (!q) return { ok: false, code: 404 };
-    await db.collection('questions').deleteOne({ id });
-    await db.collection('replies').deleteMany({ questionId: id });
+    const reps = await lcQueryAll('Reply', { questionId: id });
+    for (const r of reps) await lcDelete('Reply', r.objectId);
+    await lcDelete('Question', q.objectId);
     return { ok: true };
   },
-  async setFeatured(id, val) {
-    const { db } = await getMongo();
-    const q = await db.collection('questions').findOne({ id });
-    if (!q) return { ok: false, code: 404 };
-    await db.collection('questions').updateOne({ id }, { $set: { featured: !!val } });
-    return { ok: true };
+  async listReplies(qid) {
+    const arr = await lcQueryAll('Reply', { questionId: qid }, 'createdAt');
+    return arr.map(mapReply);
   },
-  async listReplies(questionId) {
-    const { db } = await getMongo();
-    return await db.collection('replies')
-      .find({ questionId }, { projection: { _id: 0 } })
-      .sort({ createdAt: 1 })
-      .toArray();
-  },
-  async createReply(reply) {
-    const { db } = await getMongo();
-    await db.collection('replies').insertOne({ ...reply });
-    return reply;
+  async createReply(r) {
+    await lcCreate('Reply', {
+      ourId: r.id,
+      questionId: r.questionId,
+      content: r.content || '',
+      createdAt: r.createdAt || Date.now(),
+      deleteToken: r.deleteToken || '',
+      quoteId: r.quoteId || null,
+      rootId: r.rootId || null,
+      author: r.author || null,
+      ownerId: r.ownerId || '',
+    });
+    return r;
   },
   async deleteReply(id, token) {
-    const { db } = await getMongo();
-    const r = await db.collection('replies').findOne({ id });
+    const r = await lcGetByOurId('Reply', id);
     if (!r) return { ok: false, code: 404 };
     if (r.deleteToken !== token) return { ok: false, code: 403 };
-    await db.collection('replies').deleteOne({ id });
+    await lcDelete('Reply', r.objectId);
     return { ok: true };
   },
   async adminDeleteReply(id) {
-    const { db } = await getMongo();
-    const r = await db.collection('replies').findOne({ id });
+    const r = await lcGetByOurId('Reply', id);
     if (!r) return { ok: false, code: 404 };
-    await db.collection('replies').deleteOne({ id });
+    await lcDelete('Reply', r.objectId);
+    return { ok: true };
+  },
+  async setFeatured(id, val) {
+    const q = await lcGetByOurId('Question', id);
+    if (!q) return { ok: false, code: 404 };
+    await lcUpdate('Question', q.objectId, { featured: !!val });
     return { ok: true };
   },
   async replyCounts() {
-    const { db } = await getMongo();
-    const docs = await db.collection('replies')
-      .find({}, { projection: { _id: 0, questionId: 1 } })
-      .toArray();
-    const rc = {};
-    docs.forEach((r) => { rc[r.questionId] = (rc[r.questionId] || 0) + 1; });
-    return rc;
+    const arr = await lcQueryAll('Reply');
+    const counts = {};
+    for (const r of arr) {
+      if (r.questionId) counts[r.questionId] = (counts[r.questionId] || 0) + 1;
+    }
+    return counts;
   },
-  async listAllReplies() {
-    const { db } = await getMongo();
-    return await db.collection('replies').find({}, { projection: { _id: 0 } }).toArray();
-  },
-  async createUser(user) {
-    const { db } = await getMongo();
-    const existing = await db.collection('users').findOne({ id: user.id });
-    if (existing) return { ok: true, existed: true };
-    await db.collection('users').insertOne({ ...user });
-    return { ok: true, existed: false };
+  async createUser(u) {
+    const existing = await lcGetByOurId('Account', u.id);
+    if (existing) return { existed: true };
+    await lcCreate('Account', { ourId: u.id, salt: u.salt, pwdHash: u.pwdHash });
+    return { existed: false };
   },
   async getUserSalt(id) {
-    const { db } = await getMongo();
-    const u = await db.collection('users').findOne({ id }, { projection: { _id: 0 } });
-    return u ? u.salt : null;
+    const a = await lcGetByOurId('Account', id);
+    return a ? a.salt : null;
   },
   async verifyUser(id, pwdHash) {
-    const { db } = await getMongo();
-    const u = await db.collection('users').findOne({ id }, { projection: { _id: 0 } });
-    return !!(u && u.pwdHash === pwdHash);
+    const a = await lcGetByOurId('Account', id);
+    return !!a && a.pwdHash === pwdHash;
   },
-};
-
-// ================= 统一分发 =================
-const backend = MODE === 'mongo' ? mongoBackend : fileBackend;
-
-const store = {
-  // 当前实际生效的存储模式
-  get mode() { return MODE; },
-
-  // 启动时可调用：建立连接 / 确保本地文件存在（失败不致命，端口照常监听）
-  async init() {
-    try { if (backend.init) await backend.init(); }
-    catch (e) { console.error('[storage] init 失败:', e && e.message); }
-  },
-
-  listQuestions() { return backend.listQuestions(); },
-  getQuestion(id) { return backend.getQuestion(id); },
-  createQuestion(q) { return backend.createQuestion(q); },
-  deleteQuestion(id, token) { return backend.deleteQuestion(id, token); },
-  adminDeleteQuestion(id) { return backend.adminDeleteQuestion(id); },
-  setFeatured(id, val) { return backend.setFeatured(id, val); },
-  listReplies(questionId) { return backend.listReplies(questionId); },
-  createReply(reply) { return backend.createReply(reply); },
-  deleteReply(id, token) { return backend.deleteReply(id, token); },
-  adminDeleteReply(id) { return backend.adminDeleteReply(id); },
-  replyCounts() { return backend.replyCounts(); },
-  listAllReplies() { return backend.listAllReplies(); },
-  createUser(user) { return backend.createUser(user); },
-  getUserSalt(id) { return backend.getUserSalt(id); },
-  verifyUser(id, pwdHash) { return backend.verifyUser(id, pwdHash); },
-
-  // 按 ownerId 列出"我的提问"（含回复数）
   async listMyQuestions(ownerId) {
-    const all = await backend.listQuestions();
-    const rc = await backend.replyCounts();
-    return all
-      .filter((p) => p.ownerId === ownerId)
-      .map((p) => ({
-        id: p.id, title: p.title, content: p.content, category: p.category,
-        createdAt: p.createdAt, author: p.author || null, replyCount: rc[p.id] || 0,
-      }));
+    const arr = await lcQueryAll('Question', { ownerId }, '-createdAt');
+    return arr.map(mapQuestion);
   },
-
-  // 按 ownerId 列出"我的留言"（含所属 questionId，供前端补足标题）
   async listMyReplies(ownerId) {
-    const all = await backend.listAllReplies();
-    return (all || [])
-      .filter((r) => r.ownerId === ownerId)
-      .map((r) => ({
-        id: r.id, content: r.content, createdAt: r.createdAt, questionId: r.questionId,
-        quoteId: r.quoteId || null, rootId: r.rootId || null, author: r.author || null,
-      }));
+    const arr = await lcQueryAll('Reply', { ownerId }, '-createdAt');
+    return arr.map(mapReply);
   },
-
-  // ---------- 诊断（排障用，不影响业务）----------
   async debug() {
-    const info = {
-      MODE, EXPLICIT_STORAGE,
-      mode: MODE,
-      mongoUriSet: !!process.env.MONGODB_URI,
-      _mongoHealthy,
-    };
-    // 脱敏后的连接串（仅暴露主机名，绝不暴露账号密码）
-    if (process.env.MONGODB_URI) {
+    const info = { MODE, EXPLICIT_STORAGE, mode: MODE, lcConfigured: !!(LC_APP_ID && LC_APP_KEY) };
+    if (MODE === 'lc') {
       try {
-        info.mongoUriRedacted = process.env.MONGODB_URI
-          .replace(/\/\/[^@]+@/, '//***:***@')
-          .replace(/:[^@]+@/, ':***@');
-      } catch (e) { /* ignore */ }
-    }
-    // 出口连通性测试：分别试连国内 / 国外 HTTPS，判断容器出网被如何限制
-    const egress = {};
-    for (const [name, url] of [
-      ['baidu_cn', 'https://www.baidu.com'],
-      ['mongodb_com', 'https://www.mongodb.com'],
-      ['atlas_api', 'https://cloud.mongodb.com'],
-    ]) {
-      try {
-        const r = await fetch(url, { signal: AbortSignal.timeout(8000), method: 'HEAD' });
-        egress[name] = { ok: true, status: r.status };
-      } catch (e) {
-        egress[name] = { ok: false, error: e.message };
-      }
-    }
-    info.egress = egress;
-    if (MODE === 'mongo') {
-      const uri = process.env.MONGODB_URI || '';
-      // 解析连接串中的主机名（用于 DNS / 原始 TLS 探测）——修正：取 @ 之后到 / 或 ? 为止
-      let host = '';
-      try {
-        const m = uri.match(/(?:@)([^/?#]+)/);
-        host = m ? m[1] : '';
-      } catch (e) { /* ignore */ }
-      info.parsedHost = host;
-      if (host) {
-        try {
-          const dns = require('dns');
-          const tls = require('tls');
-          const net = require('net');
-          const addrs = await new Promise((res, rej) => dns.lookup(host, (e, a) => (e ? rej(e) : res(a))));
-          info.dns = addrs;
-          // 原始 TLS 握手测试（跳过证书校验，只看能否完成握手）
-          await new Promise((res) => {
-            const sock = net.connect(27017, host);
-            const secure = tls.connect({ socket: sock, servername: host, rejectUnauthorized: false }, () => {
-              info.rawTls = { ok: true, protocol: secure.getProtocol() };
-              secure.end(); res();
-            });
-            secure.on('error', (e) => { info.rawTls = { ok: false, error: e.message }; res(); });
-            sock.on('error', (e) => { info.rawTls = { ok: false, socketError: e.message }; res(); });
-            setTimeout(() => { if (!info.rawTls) { info.rawTls = { ok: false, error: 'timeout' }; res(); } }, 9000);
-          });
-        } catch (e) {
-          info.netTest = { error: e.message };
-        }
-      }
-      // 业务连接测试（当前 tlsAllowInvalidCertificates 配置）
-      try {
-        const { db } = await getMongo();
-        await db.command({ ping: 1 });
-        const sample = await db.collection('questions').find({}, { projection: { _id: 0 } }).limit(1).toArray();
-        info.mongo = { ok: true, questionsSample: sample.length };
-        info.mongoCounts = {
-          questions: await db.collection('questions').countDocuments(),
-          replies: await db.collection('replies').countDocuments(),
+        const arr = await lcQuery('Question', undefined, undefined, 1);
+        const sample = await lcQuery('Reply', undefined, undefined, 1);
+        info.lc = {
+          ok: true,
+          questionCountSample: arr.length,
+          replyCountSample: sample.length,
+          apiBase: LC_API_BASE,
         };
       } catch (e) {
-        info.mongo = {
-          ok: false,
-          name: e && e.name,
-          code: e && e.code,
-          message: e && e.message,
-        };
-      }
-      // 二次尝试：更激进的 tlsInsecure（跳过证书+主机名校验）
-      try {
-        const { MongoClient } = require('mongodb');
-        const c2 = new MongoClient(uri, {
-          serverSelectionTimeoutMS: 8000,
-          tlsAllowInvalidCertificates: true,
-          tlsInsecure: true,
-        });
-        await c2.connect();
-        await c2.db(process.env.MONGODB_DB || 'yuyan').command({ ping: 1 });
-        info.mongoTlsInsecure = { ok: true };
-        await c2.close();
-      } catch (e) {
-        info.mongoTlsInsecure = { ok: false, error: e.message };
+        info.lc = { ok: false, name: e && e.name, status: e && e.status, message: e && e.message };
       }
     }
     return info;
   },
 };
 
+// ===================================================================
+//  本地文件后端（file，兜底 / 本地开发）
+// ===================================================================
+
+function readFile() {
+  try {
+    const raw = fs.readFileSync(DATA_FILE, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return { questions: [], replies: [], users: [] };
+  }
+}
+function writeFile(data) {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
+}
+
+const fileStore = {
+  async init() {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    console.log('[storage] 文件模式（mode=file），数据写入', DATA_FILE);
+  },
+  async listQuestions() {
+    const d = readFile();
+    return (d.questions || []).slice().sort((a, b) => b.createdAt - a.createdAt);
+  },
+  async getQuestion(id) {
+    const d = readFile();
+    return d.questions.find((q) => q.id === id) || null;
+  },
+  async createQuestion(q) {
+    const d = readFile();
+    d.questions.push(q);
+    writeFile(d);
+    return q;
+  },
+  async deleteQuestion(id, token) {
+    const d = readFile();
+    const q = d.questions.find((x) => x.id === id);
+    if (!q) return { ok: false, code: 404 };
+    if (q.deleteToken !== token) return { ok: false, code: 403 };
+    d.questions = d.questions.filter((x) => x.id !== id);
+    d.replies = d.replies.filter((x) => x.questionId !== id);
+    writeFile(d);
+    return { ok: true };
+  },
+  async adminDeleteQuestion(id) {
+    const d = readFile();
+    const q = d.questions.find((x) => x.id === id);
+    if (!q) return { ok: false, code: 404 };
+    d.questions = d.questions.filter((x) => x.id !== id);
+    d.replies = d.replies.filter((x) => x.questionId !== id);
+    writeFile(d);
+    return { ok: true };
+  },
+  async listReplies(qid) {
+    const d = readFile();
+    return (d.replies || []).filter((r) => r.questionId === qid).sort((a, b) => a.createdAt - b.createdAt);
+  },
+  async createReply(r) {
+    const d = readFile();
+    d.replies.push(r);
+    writeFile(d);
+    return r;
+  },
+  async deleteReply(id, token) {
+    const d = readFile();
+    const r = d.replies.find((x) => x.id === id);
+    if (!r) return { ok: false, code: 404 };
+    if (r.deleteToken !== token) return { ok: false, code: 403 };
+    d.replies = d.replies.filter((x) => x.id !== id);
+    writeFile(d);
+    return { ok: true };
+  },
+  async adminDeleteReply(id) {
+    const d = readFile();
+    const r = d.replies.find((x) => x.id === id);
+    if (!r) return { ok: false, code: 404 };
+    d.replies = d.replies.filter((x) => x.id !== id);
+    writeFile(d);
+    return { ok: true };
+  },
+  async setFeatured(id, val) {
+    const d = readFile();
+    const q = d.questions.find((x) => x.id === id);
+    if (!q) return { ok: false, code: 404 };
+    q.featured = !!val;
+    writeFile(d);
+    return { ok: true };
+  },
+  async replyCounts() {
+    const d = readFile();
+    const counts = {};
+    for (const r of d.replies || []) {
+      if (r.questionId) counts[r.questionId] = (counts[r.questionId] || 0) + 1;
+    }
+    return counts;
+  },
+  async createUser(u) {
+    const d = readFile();
+    const existing = d.users.find((x) => x.id === u.id);
+    if (existing) return { existed: true };
+    d.users.push(u);
+    writeFile(d);
+    return { existed: false };
+  },
+  async getUserSalt(id) {
+    const d = readFile();
+    const a = d.users.find((x) => x.id === id);
+    return a ? a.salt : null;
+  },
+  async verifyUser(id, pwdHash) {
+    const d = readFile();
+    const a = d.users.find((x) => x.id === id);
+    return !!a && a.pwdHash === pwdHash;
+  },
+  async listMyQuestions(ownerId) {
+    const d = readFile();
+    return (d.questions || []).filter((q) => q.ownerId === ownerId)
+      .sort((a, b) => b.createdAt - a.createdAt);
+  },
+  async listMyReplies(ownerId) {
+    const d = readFile();
+    return (d.replies || []).filter((r) => r.ownerId === ownerId)
+      .sort((a, b) => b.createdAt - a.createdAt);
+  },
+  async debug() {
+    return { MODE, EXPLICIT_STORAGE, mode: MODE, file: DATA_FILE };
+  },
+};
+
+// ---------- 导出 ----------
+const store = MODE === 'lc' ? lcStore : fileStore;
+store.mode = MODE;
+store.init = MODE === 'lc' ? lcStore.init : fileStore.init;
 module.exports = store;

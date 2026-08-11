@@ -1,17 +1,14 @@
 {
   "name": "anonymous-board",
-  "version": "1.1.0",
-  "description": "完全匿名的问答 / 话题讨论墙（Node.js，本地用文件存储，CloudBase 部署时自动切云数据库）",
+  "version": "1.2.0",
+  "description": "完全匿名的问答 / 话题讨论墙（Node.js，生产用 LeanCloud 云端存储，本地用文件存储兜底）",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
-  "dependencies": {
-    "@cloudbase/node-sdk": "^2.10.2",
-    "mongodb": "^6.3.0"
-  },
+  "dependencies": {},
   "engines": {
-    "node": ">=14"
+    "node": ">=18"
   },
   "license": "MIT"
 }

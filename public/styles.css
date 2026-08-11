@@ -154,8 +154,8 @@ body {
 .pill:hover { border-color: var(--brand-2); color: var(--brand); }
 .pill.active { background: var(--brand-soft); color: var(--brand); border-color: var(--brand-2); font-weight: 600; }
 .featured-pill { margin-left: 8px; }
-.featured-pill.active { background: linear-gradient(135deg, #f6c560, #efa83a); color: #5a3d00; border-color: #f0b94e; font-weight: 600; }
-.featured-pill.active:hover { color: #5a3d00; }
+.featured-pill.active { background: var(--brand-soft); color: var(--brand); border-color: var(--brand-2); font-weight: 600; }
+.featured-pill.active:hover { color: var(--brand); }
 
 /* Feed / cards */
 .feed-head { display: flex; align-items: center; justify-content: space-between; margin: 4px 4px 14px; position: relative; z-index: 5; }
@@ -202,7 +202,7 @@ body {
   padding: 3px 10px; border-radius: 999px; white-space: nowrap;
 }
 .card-admin:hover { background: var(--brand-soft); }
-.post-topic.featured { background: linear-gradient(135deg, #f6c560, #efa83a); color: #5a3d00; border: 1px solid #f0b94e; font-weight: 600; }
+.post-topic.featured { background: var(--brand); color: #fff; border: 1px solid var(--brand); font-weight: 600; }
 
 /* 管理员操作弹窗（删除 / 精选 / 取消精选） */
 .admin-menu {

@@ -73,7 +73,14 @@ function getDB() {
   if (_db) return _db;
   // 懒加载：file 模式下永远不会 require，避免无谓依赖
   const tcb = require('@cloudbase/node-sdk');
-  const app = tcb.init({ env: tcb.SYMBOL_CURRENT_ENV });
+  // 优先使用平台注入的显式环境 ID（云托管通常会设置 TCB_ENV / SCF_NAMESPACE），
+  // 否则回退到 SYMBOL_CURRENT_ENV 自动探测。显式 env 比符号解析更稳，
+  // 能避免"探测通过但真实读写连到错误环境"的诡异问题。
+  const env = process.env.TCB_ENV || process.env.SCF_NAMESPACE || tcb.SYMBOL_CURRENT_ENV;
+  console.log('[storage] tcb.init env =', process.env.TCB_ENV ? `TCB_ENV(${process.env.TCB_ENV})`
+    : process.env.SCF_NAMESPACE ? `SCF_NAMESPACE(${process.env.SCF_NAMESPACE})`
+    : 'SYMBOL_CURRENT_ENV');
+  const app = tcb.init({ env });
   _db = app.database();
   return _db;
 }
@@ -476,6 +483,29 @@ const store = {
         id: r.id, content: r.content, createdAt: r.createdAt, questionId: r.questionId,
         quoteId: r.quoteId || null, rootId: r.rootId || null, author: r.author || null,
       }));
+  },
+
+  // ---------- 诊断（排障用，不影响业务）----------
+  // 返回当前 env 标志与一次真实云数据库读操作的结果/错误，便于定位跨浏览器不可见问题。
+  async debug() {
+    const info = {
+      MODE, EXPLICIT_STORAGE,
+      mode: activeMode(),
+      envSet: {
+        TCB_ENV: !!process.env.TCB_ENV,
+        SCF_NAMESPACE: !!process.env.SCF_NAMESPACE,
+        TENCENTCLOUD_RUNENV: !!process.env.TENCENTCLOUD_RUNENV,
+      },
+      _tcbHealthy,
+    };
+    try {
+      const db = getDB();
+      const r = await withTimeout(db.collection('questions').limit(1).get(), 6000, 'debug-probe');
+      info.tcbProbe = { ok: true, dataLen: (r.data || []).length };
+    } catch (e) {
+      info.tcbProbe = { ok: false, error: e && e.message, stackTop: (e && e.stack || '').split('\n').slice(0, 5).join(' ⏎ ') };
+    }
+    return info;
   },
 };
 

@@ -113,6 +113,16 @@ async function handleApi(req, res, url) {
     return sendJSON(res, 200, { ok: true, mode: store.mode, time: Date.now() });
   }
 
+  // GET /api/debug —— 排障用：返回云数据库真实探测结果与 env 标志（只读，不写数据）
+  if (method === 'GET' && parts.length === 2 && parts[1] === 'debug') {
+    try {
+      const info = await store.debug();
+      return sendJSON(res, 200, info);
+    } catch (e) {
+      return sendJSON(res, 200, { error: e && e.message });
+    }
+  }
+
   // GET /api/questions?category=&q=&sort=&featured=1
   if (method === 'GET' && parts.length === 2 && parts[1] === 'questions') {
     const cat = (q.get('category') || '全部').trim();

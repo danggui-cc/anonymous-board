@@ -4,14 +4,15 @@
 #   docker run -p 3000:3000 -e ADMIN_KEY=你的强口令 -v yuyan-data:/data yuyan-mailbox
 #
 # 部署到腾讯云 CloudBase 云托管时：
-#   - 自动检测云环境并改用自带云数据库（STORAGE=tcb），数据持久、重启不丢
-#   - 也可在控制台环境变量显式设置 STORAGE=tcb 强制云数据库模式
+#   - 在控制台环境变量设置 MONGODB_URI（MongoDB Atlas 连接串）即自动走 mongo 模式
+#   - 数据存于 MongoDB Atlas 免费集群，跨设备/跨浏览器共享、重启不丢
+#   - 未设置 MONGODB_URI 时回退到本地文件模式（STORAGE=file）
 
 FROM node:18-slim
 
 WORKDIR /app
 
-# 先装依赖（@cloudbase/node-sdk 用于云数据库模式；本地文件模式不会加载它）
+# 先装依赖（mongodb 驱动用于云数据库模式；本地文件模式不会加载它）
 COPY package.json ./
 RUN npm install --production
 
@@ -19,14 +20,11 @@ RUN npm install --production
 COPY server.js storage.js ./
 COPY public ./public
 
-# 数据目录：本地文件模式（STORAGE=file）会把数据写到这里
 ENV PORT=3000
-ENV DATA_DIR=/data
 ENV NODE_ENV=production
-# 强制使用 CloudBase 云数据库，避免容器重启/重新部署后文件数据丢失
-ENV STORAGE=tcb
+# 默认本地文件兜底；若容器环境变量设置了 MONGODB_URI，storage.js 会自动切到 mongo 模式
 
-# 创建数据目录并允许写入（部分云环境要求）
+# 创建数据目录并允许写入（部分云环境要求，文件模式用）
 RUN mkdir -p /data && chmod 777 /data
 
 EXPOSE 3000

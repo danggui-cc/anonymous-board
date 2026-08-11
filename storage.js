@@ -490,19 +490,36 @@ const store = {
     const info = {
       MODE, EXPLICIT_STORAGE,
       mode: activeMode(),
+      // 仅报告"是否存在"，绝不输出敏感值
       envSet: {
         TCB_ENV: !!process.env.TCB_ENV,
         SCF_NAMESPACE: !!process.env.SCF_NAMESPACE,
         TENCENTCLOUD_RUNENV: !!process.env.TENCENTCLOUD_RUNENV,
+        TENCENTCLOUD_SECRETID: !!process.env.TENCENTCLOUD_SECRETID,
+        TENCENTCLOUD_SECRETKEY: !!process.env.TENCENTCLOUD_SECRETKEY,
+        TENCENTCLOUD_SESSIONTOKEN: !!process.env.TENCENTCLOUD_SESSIONTOKEN,
       },
+      envKeys: Object.keys(process.env).filter(k =>
+        /^(TENCENTCLOUD_|TCB_|SCF_|CLOUDBASE_)/.test(k)),
       _tcbHealthy,
     };
     try {
       const db = getDB();
-      const r = await withTimeout(db.collection('questions').limit(1).get(), 6000, 'debug-probe');
-      info.tcbProbe = { ok: true, dataLen: (r.data || []).length };
+      let realError = null;
+      const p = db.collection('questions').limit(1).get().catch((err) => { realError = err; throw err; });
+      try {
+        const r = await withTimeout(p, 9000, 'debug-probe');
+        info.tcbProbe = { ok: true, dataLen: (r.data || []).length };
+      } catch (e) {
+        info.tcbProbe = {
+          ok: false,
+          timedOut: /超时/.test(e && e.message || ''),
+          error: e && e.message,
+          realError: realError ? { name: realError.name, code: realError.code, message: realError.message } : null,
+        };
+      }
     } catch (e) {
-      info.tcbProbe = { ok: false, error: e && e.message, stackTop: (e && e.stack || '').split('\n').slice(0, 5).join(' ⏎ ') };
+      info.tcbProbe = { ok: false, error: e && e.message };
     }
     return info;
   },

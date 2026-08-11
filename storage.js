@@ -170,6 +170,9 @@ async function getMongo() {
   const client = new MongoClient(uri, {
     serverSelectionTimeoutMS: 8000,
     maxPoolSize: 10,
+    // 兼容部分云容器出口的 TLS 拦截网关：跳过对端证书校验，
+    // 否则握手会报 "tlsv1 alert internal error" 导致连不上 Atlas。
+    tlsAllowInvalidCertificates: true,
   });
   await client.connect();
   const db = client.db(process.env.MONGODB_DB || 'yuyan');
@@ -346,6 +349,36 @@ const store = {
       _mongoHealthy,
     };
     if (MODE === 'mongo') {
+      const uri = process.env.MONGODB_URI || '';
+      // 解析连接串中的主机名（用于 DNS / 原始 TLS 探测）
+      let host = '';
+      try {
+        const m = uri.match(/[@/]([a-zA-Z0-9.\-]+)(:\d+)?/);
+        host = m ? m[1] : '';
+      } catch (e) { /* ignore */ }
+      info.parsedHost = host;
+      if (host) {
+        try {
+          const dns = require('dns');
+          const tls = require('tls');
+          const net = require('net');
+          const addrs = await new Promise((res, rej) => dns.lookup(host, (e, a) => (e ? rej(e) : res(a))));
+          info.dns = addrs;
+          // 原始 TLS 握手测试（跳过证书校验，只看能否完成握手）
+          await new Promise((res) => {
+            const sock = net.connect(27017, host);
+            const secure = tls.connect({ socket: sock, servername: host, rejectUnauthorized: false }, () => {
+              info.rawTls = { ok: true, protocol: secure.getProtocol() };
+              secure.end(); res();
+            });
+            secure.on('error', (e) => { info.rawTls = { ok: false, error: e.message }; res(); });
+            sock.on('error', (e) => { info.rawTls = { ok: false, socketError: e.message }; res(); });
+            setTimeout(() => { if (!info.rawTls) { info.rawTls = { ok: false, error: 'timeout' }; res(); } }, 9000);
+          });
+        } catch (e) {
+          info.netTest = { error: e.message };
+        }
+      }
       try {
         const { db } = await getMongo();
         await db.command({ ping: 1 });

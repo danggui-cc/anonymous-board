@@ -108,6 +108,11 @@ async function handleApi(req, res, url) {
   const method = req.method;
   const q = url.searchParams;
 
+  // GET /api/health —— 健康检查（探针 / 排障用，永远返回 200，不依赖数据库）
+  if (method === 'GET' && parts.length === 2 && parts[1] === 'health') {
+    return sendJSON(res, 200, { ok: true, mode: store.mode, time: Date.now() });
+  }
+
   // GET /api/questions?category=&q=&sort=&featured=1
   if (method === 'GET' && parts.length === 2 && parts[1] === 'questions') {
     const cat = (q.get('category') || '全部').trim();
@@ -326,10 +331,14 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`欲言信箱已启动: http://localhost:${PORT} (存储模式: ${store.mode})`);
   // 后台异步确保集合存在。
-  // 强制 tcb 模式下若连不上云数据库，说明数据会丢失，必须让服务退出以便用户排查。
-  store.init().catch((e) => {
-    console.error('[fatal] 存储初始化失败:', e && e.message);
-    process.exit(1);
+  // 重要：初始化失败【绝不】直接退出进程！
+  // 否则端口会关闭、CloudBase 就绪探针 connection refused、容器被无限重启，
+  // 表现为"服务器暂不可用"。失败只记日志，端口保持监听、静态页照常服务，
+  // 数据库恢复后由带超时的接口调用自愈（见 storage.js 的 30s 重试）。
+  store.init().then(() => {
+    console.log('[storage] 初始化完成');
+  }).catch((e) => {
+    console.error('[storage] 初始化失败（进程继续运行，端口保持监听）:', e && e.message, e && e.stack);
   });
 });
 

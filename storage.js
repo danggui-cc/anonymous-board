@@ -87,6 +87,16 @@ function withTimeout(promise, ms, label) {
   ]);
 }
 
+// 故障自愈：探测失败后，过一段时间把 _tcbHealthy 重置为 null，
+// 让后续请求重新探测（比如用户在控制台补建了集合 / 修正了权限后自动恢复，
+// 不必重新部署）。用 _retryScheduled 防止定时器堆积。
+let _retryScheduled = false;
+function scheduleRetry() {
+  if (_retryScheduled) return;
+  _retryScheduled = true;
+  setTimeout(() => { _tcbHealthy = null; _retryScheduled = false; }, 30000);
+}
+
 // 探测云数据库是否真正可用（避免 tcb 初始化后调用永远挂起导致 API 无响应）
 async function probeTcbHealth() {
   if (_tcbHealthy !== null) return _tcbHealthy;
@@ -99,6 +109,7 @@ async function probeTcbHealth() {
     return true;
   } catch (e) {
     _tcbHealthy = false;
+    scheduleRetry();
     if (!allowFallback()) {
       console.error('[storage] 显式配置 STORAGE=tcb，但云数据库探测失败:', e && e.message);
       throw new Error('STORAGE=tcb 配置下无法连接 CloudBase 云数据库，请检查集合/权限/网络。错误：' + (e && e.message));
@@ -113,13 +124,19 @@ let _ensured = false;
 async function ensureCollections() {
   if (_ensured) return;
   _ensured = true;
-  if (!(await probeTcbHealth())) return;
+  if (MODE !== 'tcb') return;
   try {
     const db = getDB();
+    // 先创建集合（幂等：已存在则静默失败）。不要依赖"先探测成功"——
+    // 否则"集合不存在→探测失败→永不建集合"会陷入死锁。
     await withTimeout(db.createCollection('questions'), 5000, 'createCollection questions').catch(() => {});
     await withTimeout(db.createCollection('replies'), 5000, 'createCollection replies').catch(() => {});
     await withTimeout(db.createCollection('users'), 5000, 'createCollection users').catch(() => {});
-  } catch (e) { /* 忽略，控制台手动创建亦可 */ }
+    // 再探测连通性（失败不影响端口监听，由 30s 重试自愈）
+    await probeTcbHealth();
+  } catch (e) {
+    console.error('[storage] 初始化/探测失败，端口仍正常监听，将自动重试:', e && e.message);
+  }
 }
 
 // 当前实际生效的存储模式

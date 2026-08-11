@@ -118,7 +118,11 @@ function renderQuestion(q) {
   qContent.textContent = q.content;
   const tokens = getTokens();
   const owned = !!tokens[q.id];
-  if (owned) setOwned(q.id, { type: 'question' });
+  if (owned) {
+    setOwned(q.id, { type: 'question' });
+    // 本人问题：把发帖身份缓存为“本人身份”，确保之后在此问题下留言昵称与发帖一致
+    YuyanIdentity.setVisitor(q.id, a);
+  }
   if (ADMIN || owned) {
     qDel.classList.remove('hidden');
     qDel.innerHTML = (ADMIN && !owned) ? ICONS.shield + ' 删除' : ICONS.trash + ' 删除我的问题';

@@ -229,9 +229,9 @@ function renderCats() {
   });
 }
 function updateAllBtn() {
-  // 按钮显示当前选中的分类名；非“全部”时整体变深色高亮
+  // 按钮显示当前选中的分类名；只要处于“分类视图”（非精选模式）就以深色高亮
   allBtn.innerHTML = `${escapeHtml(curCat)} <span class="caret">▾</span>`;
-  allBtn.classList.toggle('has-value', curCat !== '全部');
+  allBtn.classList.toggle('has-value', !curFeatured);
 }
 function openCatDropdown() {
   catDropdown.classList.remove('hidden');
@@ -252,7 +252,19 @@ function setCategory(c) {
   updateAllBtn();
   loadQuestions();
 }
-allBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleCatDropdown(); });
+allBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (curFeatured) {
+    // 当前在精选模式，点【全部 ▾】即切回分类视图：取消精选高亮、分类模块高亮、展开下拉
+    curFeatured = false;
+    featuredBtn.classList.remove('active');
+    updateAllBtn();
+    loadQuestions();
+    openCatDropdown();
+  } else {
+    toggleCatDropdown();
+  }
+});
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.filter-all')) closeCatDropdown();
 });
@@ -262,6 +274,7 @@ featuredBtn.addEventListener('click', () => {
   curFeatured = !curFeatured;
   featuredBtn.classList.toggle('active', curFeatured);
   if (curFeatured) catDropdown.classList.add('hidden');
+  updateAllBtn(); // 同步【全部 ▾】模块高亮（精选时取消、切回时恢复）
   loadQuestions();
 });
 

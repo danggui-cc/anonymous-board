@@ -14,6 +14,7 @@
 - 🕒🔥 **排序**：首页「全部问题」右侧可切换「时间 / 热度」（热度 = 回复数）排序
 - 🗑️ **可删自己的发言**：提问 / 回复均凭私密令牌删除（同浏览器自动识别；问题和回复都支持**跨设备管理链接**）
 - 🛡️ **管理员清理**：输入口令进入「管理模式」后，可删除任意违规问题 / 回复（口令由环境变量 `ADMIN_KEY` 控制）
+- 🔑 **跨设备找回**：每位访客自动获得一个固定身份 ID（存于本浏览器），可选设置密码；凭「ID + 密码」可在任意设备找回「我的提问 / 我的留言」，换浏览器或清缓存也不怕丢失（密码以盐 + SHA-256 哈希存储，明文不下发）
 - 💾 **双模式存储**：本地 / 无云环境用 `data/data.json` 文件；部署到腾讯云 CloudBase 时**自动切换**到自带云数据库（持久、重启不丢，不依赖对象存储挂载）
 - 🎨 淡墨绿调视觉
 
@@ -48,6 +49,11 @@ ADMIN_KEY=你的强口令 node server.js
 - `POST /api/admin/verify`                       校验管理员口令，body `{key}`
 - `DELETE /api/admin/questions/:id`              管理员删问题（header `x-admin-key`）
 - `DELETE /api/admin/replies/:id`                管理员删回复（header `x-admin-key`）
+- `POST /api/account/setup`                       建立账号，body `{id, salt, pwdHash}`（幂等）
+- `POST /api/account/salt`                        取盐（登录前），body `{id}`
+- `POST /api/account/login`                       校验密码，body `{id, pwdHash}`
+- `GET  /api/me/questions?ownerId=`              我的提问（按 ownerId 聚合）
+- `GET  /api/me/replies?ownerId=`                我的留言（按 ownerId 聚合）
 
 ## 跨设备管理链接
 - 提问 / 回复的删除令牌由系统生成，**访问对应管理链接即在任意设备获得删除权限**（不再弹窗提醒，静默生效）：
@@ -145,7 +151,7 @@ git push
 6. 服务配置：
    - 端口：`3000`
    - 环境变量：加 `ADMIN_KEY`（你的强口令）；可选加 `STORAGE=tcb` 强制使用云数据库（程序也会自动检测云环境）
-7. **创建云数据库集合**（一次性，必做）：在 CloudBase 控制台 → 该环境 → **数据库** → 新建集合，分别建两个集合：`questions` 和 `replies`（权限可设为"所有用户可读写"，程序已自管令牌）。
+7. **创建云数据库集合**（一次性，必做）：在 CloudBase 控制台 → 该环境 → **数据库** → 新建集合，分别建三个集合：`questions`、`replies`、`users`（权限可设为"所有用户可读写"，程序已自管令牌）。
 8. 点「开始部署」，几分钟后得到 `https://xxx-xxx.gz.apigw.tencentcs.com` 之类的 HTTPS 地址。
 
 > 如部署后访问报数据库相关错误，多半是漏了第 7 步的集合创建，回去补上即可。
@@ -160,7 +166,7 @@ git push
 | 模式 | 触发条件 | 数据位置 | 持久性 |
 |------|----------|----------|--------|
 | 文件（file） | 默认；或显式 `STORAGE=file` | 容器/本机的 `data/data.json`（可用 `DATA_DIR` 指定） | 仅本地或无云环境；容器实例重启/重建会清空 |
-| 云数据库（tcb） | 检测到 CloudBase 环境（`TCB_ENV`/`SCF_NAMESPACE`/`TENCENTCLOUD_RUNENV`），或显式 `STORAGE=tcb` | CloudBase 环境内的 NoSQL 数据库（集合 `questions`/`replies`） | ✅ 持久，重启/重建不丢 |
+| 云数据库（tcb） | 检测到 CloudBase 环境（`TCB_ENV`/`SCF_NAMESPACE`/`TENCENTCLOUD_RUNENV`），或显式 `STORAGE=tcb` | CloudBase 环境内的 NoSQL 数据库（集合 `questions`/`replies`/`users`） | ✅ 持久，重启/重建不丢 |
 
 - 本地 `npm start` 走文件模式，开发与调试最方便。
 - 上云后自动切云数据库；若自动检测失灵，在云托管控制台的服务环境变量里加 `STORAGE=tcb` 强制即可。

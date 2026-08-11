@@ -76,10 +76,19 @@ function getDB() {
   // 重要：CloudBase 云托管【不会】自动注入 TCB_ENV / SCF_NAMESPACE 等环境变量
   // （已用 /api/debug 验证 envSet 三项全为 false）。因此 SYMBOL_CURRENT_ENV 在云托管里
   // 解析不到正确环境，会导致云数据库读写全部超时、数据无法跨浏览器共享。
-  // 这里显式写死本项目云环境 ID 作为兜底，确保一定连到正确的云数据库。
+  // 这里显式写死本项目云环境 ID；同时把控制台配置的环境变量密钥显式传入，
+  // 避免 node-sdk 在云托管里不自动读取 TENCENTCLOUD_SECRETID/SECRETKEY 导致鉴权挂起。
   const env = process.env.TCB_ENV || process.env.SCF_NAMESPACE || 'yuyan-d1glwnbe78adbecd0';
-  console.log('[storage] tcb.init env =', env);
-  const app = tcb.init({ env });
+  const initOpts = { env };
+  if (process.env.TENCENTCLOUD_SECRETID && process.env.TENCENTCLOUD_SECRETKEY) {
+    initOpts.secretId = process.env.TENCENTCLOUD_SECRETID;
+    initOpts.secretKey = process.env.TENCENTCLOUD_SECRETKEY;
+  }
+  if (process.env.TENCENTCLOUD_SESSIONTOKEN) {
+    initOpts.sessionToken = process.env.TENCENTCLOUD_SESSIONTOKEN;
+  }
+  console.log('[storage] tcb.init env =', env, '| 显式密钥:', !!initOpts.secretId);
+  const app = tcb.init(initOpts);
   _db = app.database();
   return _db;
 }
@@ -503,23 +512,35 @@ const store = {
         /^(TENCENTCLOUD_|TCB_|SCF_|CLOUDBASE_)/.test(k)),
       _tcbHealthy,
     };
+    // 1) 原生网络连通性：容器能否 TCP/TLS 触达 CloudBase API 端点
     try {
-      const db = getDB();
-      let realError = null;
-      const p = db.collection('questions').limit(1).get().catch((err) => { realError = err; throw err; });
-      try {
-        const r = await withTimeout(p, 9000, 'debug-probe');
-        info.tcbProbe = { ok: true, dataLen: (r.data || []).length };
-      } catch (e) {
-        info.tcbProbe = {
-          ok: false,
-          timedOut: /超时/.test(e && e.message || ''),
-          error: e && e.message,
-          realError: realError ? { name: realError.name, code: realError.code, message: realError.message } : null,
-        };
-      }
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 5000);
+      const r = await fetch('https://tcb.tencentcloudapi.com/', { method: 'GET', signal: ctrl.signal });
+      clearTimeout(t);
+      info.netTest = { reachable: true, status: r.status };
     } catch (e) {
-      info.tcbProbe = { ok: false, error: e && e.message };
+      info.netTest = { reachable: false, error: e && e.message };
+    }
+    // 2) 显式传入密钥初始化，再试一次查询（排除"env 没被 SDK 解析"的可能）
+    try {
+      const tcb = require('@cloudbase/node-sdk');
+      const app = tcb.init({
+        secretId: process.env.TENCENTCLOUD_SECRETID,
+        secretKey: process.env.TENCENTCLOUD_SECRETKEY,
+        env: 'yuyan-d1glwnbe78adbecd0',
+      });
+      const db = app.database();
+      const r = await withTimeout(db.collection('questions').limit(1).get(), 15000, 'explicit-probe');
+      info.explicitProbe = { ok: true, dataLen: (r.data || []).length };
+    } catch (e) {
+      info.explicitProbe = {
+        ok: false,
+        name: e && e.name,
+        code: e && e.code,
+        message: e && e.message,
+        stackTop: (e && e.stack || '').split('\n').slice(0, 4).join(' ⏎ '),
+      };
     }
     return info;
   },

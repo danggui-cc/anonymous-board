@@ -108,7 +108,7 @@ async function apiDeleteReply(rid, token) {
 
 // ---------- 渲染 ----------
 function renderQuestion(q) {
-  qCat.innerHTML = '#' + escapeHtml(q.category) + (q.featured ? ' <span class="post-topic featured">⭐ 精选</span>' : '');
+  qCat.innerHTML = '#' + escapeHtml(q.category) + (q.featured ? ' <span class="post-topic featured">' + ICONS.star + ' 精选</span>' : '');
   qTitle.textContent = q.title || '（无标题）';
   const a = YuyanIdentity.authorOf(q);
   qAuthor.innerHTML = '<span class="reply-avatar small" style="background:' + escapeAttr(a.color || '#E3EFE8') + '">' + (a.avatar || '🙂') + '</span>' +
@@ -121,7 +121,7 @@ function renderQuestion(q) {
   if (owned) setOwned(q.id, { type: 'question' });
   if (ADMIN || owned) {
     qDel.classList.remove('hidden');
-    qDel.textContent = (ADMIN && !owned) ? '🛡 删除(管理)' : '🗑 删除我的问题';
+    qDel.innerHTML = (ADMIN && !owned) ? ICONS.shield + ' 删除' : ICONS.trash + ' 删除我的问题';
     qDel.onclick = ADMIN ? () => adminDeleteQuestion() : () => deleteQuestion();
   } else {
     qDel.classList.add('hidden');
@@ -149,7 +149,7 @@ function buildNode(r, byId, tokens, depth, kids) {
   const owned = !!tokens[r.id];
   const delBtn = owned
     ? '<button class="reply-del" data-id="' + r.id + '">删除</button>'
-    : (ADMIN ? '<button class="reply-del admin" data-id="' + r.id + '">🛡</button>' : '');
+    : (ADMIN ? '<button class="reply-del admin" data-id="' + r.id + '">' + ICONS.shield + '</button>' : '');
   const quoteBtn = '<button class="reply-quote-btn" data-id="' + r.id + '" title="回复这条留言">回复</button>';
   const el = document.createElement('div');
   el.className = 'reply-item' + (depth > 0 ? ' nested' : '');

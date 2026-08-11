@@ -145,7 +145,7 @@ function renderNotifications() {
     const seen = new Set(getSeen());
     markSeen(notifs.map((n) => n.replyId));
     if (!notifs.length) {
-      notifList.innerHTML = '<div class="me-empty">暂无新消息<br>有人回复你的提问、或引用你的留言时，会在这里提醒你 🔔</div>';
+      notifList.innerHTML = '<div class="me-empty">暂无新消息<br>有人回复你的提问、或引用你的留言时，会在这里提醒你 ' + ICONS.bell + '</div>';
       return;
     }
     notifList.innerHTML = notifs.map((n) => {
@@ -171,7 +171,7 @@ function renderMyQuestionsPanel(list) {
     const title = q.title ? escapeHtml(q.title) : '（无标题）';
     return '<a class="me-row" href="question.html?id=' + encodeURIComponent(q.id) + '">' +
       '<div class="me-row-title">' + title + '</div>' +
-      '<div class="me-row-meta">' + fmtDate(q.createdAt) + ' · 💬 ' + (q.replyCount || 0) + ' 回复</div>' +
+      '<div class="me-row-meta">' + fmtDate(q.createdAt) + ' · ' + ICONS.chat + ' ' + (q.replyCount || 0) + ' 回复</div>' +
       '</a>';
   }).join('');
 }
@@ -204,7 +204,7 @@ async function renderMyQuestions() {
 // ---------- 我的留言 ----------
 function renderMyRepliesPanel(items) {
   if (!items.length) {
-    myRepliesList.innerHTML = '<div class="me-empty">你还没有留言<br>在问题详情页写下第一条回复吧 💬</div>';
+    myRepliesList.innerHTML = '<div class="me-empty">你还没有留言<br>在问题详情页写下第一条回复吧 ' + ICONS.chat + '</div>';
     return;
   }
   myRepliesList.innerHTML = items.map((it) => {
@@ -330,14 +330,14 @@ function enterAdminMode() {
   adminPanel.classList.add('unlocked');
   adminPanel.querySelector('.admin-label').textContent = '管理模式';
   adminKeyInput.value = '';
-  adminHint.innerHTML = '已解锁 🛡 回到首页后，问题卡片右上角会显示删除按钮。';
+  adminHint.innerHTML = '已解锁 ' + ICONS.shield + ' 回到首页后，问题卡片右上角会显示「管理」按钮。';
 }
 function exitAdminMode() {
   localStorage.removeItem('yyx_admin');
   adminPanel.classList.remove('unlocked');
   adminPanel.classList.add('locked');
   adminPanel.querySelector('.admin-label').textContent = '管理员口令';
-  adminHint.textContent = '解锁后，首页的问题卡片右上角会显示 🛡 删除按钮。';
+  adminHint.innerHTML = '解锁后，首页的问题卡片右上角会显示「' + ICONS.shield + ' 管理」按钮。';
 }
 async function adminUnlock() {
   const key = adminKeyInput.value.trim();

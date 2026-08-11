@@ -188,8 +188,8 @@ function buildCards(list) {
       `<span class="reply-avatar small" style="background:${escapeAttr(a.color || '#E3EFE8')}">${a.avatar || '🙂'}</span>` +
       `<span class="q-author-name">${escapeHtml(a.nickname || '匿名用户')}</span></div>`;
     const title = q.title ? `<h3 class="q-card-title">${escapeHtml(q.title)}</h3>` : '';
-    const featuredBadge = q.featured ? `<span class="post-topic featured">⭐ 精选</span>` : '';
-    const adminBtnHtml = ADMIN ? `<button class="card-admin" data-id="${escapeAttr(q.id)}" data-featured="${q.featured ? 1 : 0}" title="管理">🛡 管理</button>` : '';
+    const featuredBadge = q.featured ? `<span class="post-topic featured">${ICONS.star} 精选</span>` : '';
+    const adminBtnHtml = ADMIN ? `<button class="card-admin" data-id="${escapeAttr(q.id)}" data-featured="${q.featured ? 1 : 0}" title="管理">${ICONS.shield} 管理</button>` : '';
     card.innerHTML = `
       ${authorHtml}
       <div class="q-card-top"><span class="post-topic">#${escapeHtml(q.category)}</span>${featuredBadge}${adminBtnHtml}</div>
@@ -197,7 +197,7 @@ function buildCards(list) {
       <p class="q-snippet">${escapeHtml(q.content)}</p>
       <div class="q-card-foot">
         <span>${fmtDate(q.createdAt)}</span>
-        <span class="q-replies">💬 ${q.replyCount || 0} 回复</span>
+        <span class="q-replies">${ICONS.chat} ${q.replyCount || 0} 回复</span>
       </div>`;
     card.addEventListener('click', (e) => {
       if (e.target.closest('.card-admin') || e.target.closest('.card-del')) return;
@@ -256,10 +256,10 @@ function openAdminMenu(btn) {
   adminTarget = { id, featured: isFeat };
   adminMenu.innerHTML = '';
   const del = document.createElement('button');
-  del.className = 'admin-menu-item danger'; del.dataset.act = 'delete'; del.textContent = '🗑 删除';
+  del.className = 'admin-menu-item danger'; del.dataset.act = 'delete'; del.innerHTML = ICONS.trash + ' 删除';
   const feat = document.createElement('button');
   feat.className = 'admin-menu-item'; feat.dataset.act = isFeat ? 'unfeature' : 'feature';
-  feat.textContent = isFeat ? '⭐ 取消精选' : '⭐ 精选';
+  feat.innerHTML = isFeat ? ICONS.star + ' 取消精选' : ICONS.star + ' 精选';
   adminMenu.appendChild(del); adminMenu.appendChild(feat);
   const rect = btn.getBoundingClientRect();
   adminMenu.style.top = (window.scrollY + rect.bottom + 6) + 'px';

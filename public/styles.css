@@ -276,7 +276,13 @@ body {
 .reply-del:hover { color: var(--danger); }
 
 /* Footer */
-.site-footer { text-align: center; color: var(--muted); font-size: 12px; padding: 24px 16px 40px; }
+.site-footer { text-align: center; color: var(--muted); font-size: 12px; padding: 24px 16px 40px; line-height: 1.9; }
+.footer-line1 { display: flex; align-items: center; justify-content: center; gap: 5px; color: var(--deep); font-weight: 600; }
+.footer-line2 { font-size: 11px; opacity: .8; margin-top: 2px; }
+
+/* 统一描边图标（无填充，stroke 跟随文字颜色） */
+.ico { width: 1.1em; height: 1.1em; vertical-align: -0.2em; flex: none; }
+.search-ico .ico { width: 17px; height: 17px; }
 
 /* Notification badge in menu */
 .notif-badge {

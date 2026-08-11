@@ -348,12 +348,35 @@ const store = {
       mongoUriSet: !!process.env.MONGODB_URI,
       _mongoHealthy,
     };
+    // 脱敏后的连接串（仅暴露主机名，绝不暴露账号密码）
+    if (process.env.MONGODB_URI) {
+      try {
+        info.mongoUriRedacted = process.env.MONGODB_URI
+          .replace(/\/\/[^@]+@/, '//***:***@')
+          .replace(/:[^@]+@/, ':***@');
+      } catch (e) { /* ignore */ }
+    }
+    // 出口连通性测试：分别试连国内 / 国外 HTTPS，判断容器出网被如何限制
+    const egress = {};
+    for (const [name, url] of [
+      ['baidu_cn', 'https://www.baidu.com'],
+      ['mongodb_com', 'https://www.mongodb.com'],
+      ['atlas_api', 'https://cloud.mongodb.com'],
+    ]) {
+      try {
+        const r = await fetch(url, { signal: AbortSignal.timeout(8000), method: 'HEAD' });
+        egress[name] = { ok: true, status: r.status };
+      } catch (e) {
+        egress[name] = { ok: false, error: e.message };
+      }
+    }
+    info.egress = egress;
     if (MODE === 'mongo') {
       const uri = process.env.MONGODB_URI || '';
-      // 解析连接串中的主机名（用于 DNS / 原始 TLS 探测）
+      // 解析连接串中的主机名（用于 DNS / 原始 TLS 探测）——修正：取 @ 之后到 / 或 ? 为止
       let host = '';
       try {
-        const m = uri.match(/[@/]([a-zA-Z0-9.\-]+)(:\d+)?/);
+        const m = uri.match(/(?:@)([^/?#]+)/);
         host = m ? m[1] : '';
       } catch (e) { /* ignore */ }
       info.parsedHost = host;
@@ -379,6 +402,7 @@ const store = {
           info.netTest = { error: e.message };
         }
       }
+      // 业务连接测试（当前 tlsAllowInvalidCertificates 配置）
       try {
         const { db } = await getMongo();
         await db.command({ ping: 1 });
@@ -395,6 +419,21 @@ const store = {
           code: e && e.code,
           message: e && e.message,
         };
+      }
+      // 二次尝试：更激进的 tlsInsecure（跳过证书+主机名校验）
+      try {
+        const { MongoClient } = require('mongodb');
+        const c2 = new MongoClient(uri, {
+          serverSelectionTimeoutMS: 8000,
+          tlsAllowInvalidCertificates: true,
+          tlsInsecure: true,
+        });
+        await c2.connect();
+        await c2.db(process.env.MONGODB_DB || 'yuyan').command({ ping: 1 });
+        info.mongoTlsInsecure = { ok: true };
+        await c2.close();
+      } catch (e) {
+        info.mongoTlsInsecure = { ok: false, error: e.message };
       }
     }
     return info;

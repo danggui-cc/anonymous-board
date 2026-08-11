@@ -531,6 +531,18 @@ const store = {
         env: 'yuyan-d1glwnbe78adbecd0',
       });
       const db = app.database();
+      // 2.1 先显式尝试创建集合，记录真实结果（之前被 .catch 吞掉，无法定位）
+      const createResults = {};
+      for (const name of ['questions', 'replies', 'users']) {
+        try {
+          await withTimeout(db.createCollection(name), 8000, `create ${name}`);
+          createResults[name] = 'ok';
+        } catch (ce) {
+          createResults[name] = { code: ce && ce.code, message: (ce && ce.message || '').slice(0, 120) };
+        }
+      }
+      info.createCollections = createResults;
+      // 2.2 再查询
       const r = await withTimeout(db.collection('questions').limit(1).get(), 15000, 'explicit-probe');
       info.explicitProbe = { ok: true, dataLen: (r.data || []).length };
     } catch (e) {

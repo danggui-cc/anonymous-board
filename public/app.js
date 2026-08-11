@@ -232,14 +232,17 @@ function updateAllBtn() {
   // 按钮显示当前选中的分类名；只要处于“分类视图”（非精选模式）就以深色高亮
   allBtn.innerHTML = `${escapeHtml(curCat)} <span class="caret">▾</span>`;
   allBtn.classList.toggle('has-value', !curFeatured);
+  allBtn.setAttribute('aria-expanded', String(!catDropdown.classList.contains('hidden')));
 }
 function openCatDropdown() {
   catDropdown.classList.remove('hidden');
   allBtn.classList.add('open');
+  allBtn.setAttribute('aria-expanded', 'true');
 }
 function closeCatDropdown() {
   catDropdown.classList.add('hidden');
   allBtn.classList.remove('open');
+  allBtn.setAttribute('aria-expanded', 'false');
 }
 function toggleCatDropdown() {
   if (catDropdown.classList.contains('hidden')) openCatDropdown();
@@ -252,19 +255,21 @@ function setCategory(c) {
   updateAllBtn();
   loadQuestions();
 }
+// 【全部 ▾】= 纯下拉开关：默认收起 → 点开 → 再点或选中即收起。
+// 若在精选模式下点它，则先退出精选（恢复分类高亮），并把下拉收起，避免“强行展开”造成开关错觉。
 allBtn.addEventListener('click', (e) => {
   e.stopPropagation();
   if (curFeatured) {
-    // 当前在精选模式，点【全部 ▾】即切回分类视图：取消精选高亮、分类模块高亮、展开下拉
     curFeatured = false;
     featuredBtn.classList.remove('active');
     updateAllBtn();
     loadQuestions();
-    openCatDropdown();
-  } else {
-    toggleCatDropdown();
+    closeCatDropdown();
+    return;
   }
+  toggleCatDropdown();
 });
+// 点击下拉以外区域自动收起
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.filter-all')) closeCatDropdown();
 });
@@ -273,7 +278,7 @@ document.addEventListener('click', (e) => {
 featuredBtn.addEventListener('click', () => {
   curFeatured = !curFeatured;
   featuredBtn.classList.toggle('active', curFeatured);
-  if (curFeatured) catDropdown.classList.add('hidden');
+  if (curFeatured) closeCatDropdown(); // 进入精选：收起分类下拉
   updateAllBtn(); // 同步【全部 ▾】模块高亮（精选时取消、切回时恢复）
   loadQuestions();
 });

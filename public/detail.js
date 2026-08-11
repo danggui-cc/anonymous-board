@@ -23,14 +23,7 @@ const replyCount = $('#replyCount');
 const repliesNum = $('#repliesNum');
 const replyList = $('#replyList');
 const replyEmpty = $('#replyEmpty');
-const modeBadge = $('#modeBadge');
 const toast = $('#toast');
-const adminBtn = $('#adminBtn');
-const adminPanel = $('#adminPanel');
-const adminKeyInput = $('#adminKeyInput');
-const adminUnlockBtn = $('#adminUnlock');
-const adminExit = $('#adminExit');
-const adminBadge = $('#adminBadge');
 const replyQuote = $('#replyQuote');
 const replyQuoteCancel = $('#replyQuoteCancel');
 let ADMIN = false;
@@ -157,7 +150,7 @@ function buildNode(r, byId, tokens, depth, kids) {
   const delBtn = owned
     ? '<button class="reply-del" data-id="' + r.id + '">删除</button>'
     : (ADMIN ? '<button class="reply-del admin" data-id="' + r.id + '">🛡</button>' : '');
-  const quoteBtn = '<button class="reply-quote-btn" data-id="' + r.id + '" title="引用这条留言">引用</button>';
+  const quoteBtn = '<button class="reply-quote-btn" data-id="' + r.id + '" title="回复这条留言">回复</button>';
   const el = document.createElement('div');
   el.className = 'reply-item' + (depth > 0 ? ' nested' : '');
   el.dataset.rid = r.id;
@@ -239,7 +232,7 @@ function startQuote(id) {
   const r = currentReplies.find((x) => x.id === id);
   if (!r) return;
   quoteTarget = { id, snippet: r.content };
-  replyQuote.querySelector('.rq-text').textContent = '引用：' + r.content.slice(0, 120);
+  replyQuote.querySelector('.rq-text').textContent = '回复：' + r.content.slice(0, 120);
   replyQuote.classList.remove('hidden');
   replyInput.focus();
 }
@@ -285,64 +278,6 @@ async function reload() {
 
 // ---------- 管理员 ----------
 function loadAdmin() { ADMIN = !!localStorage.getItem('yyx_admin'); }
-function enterAdminMode() {
-  ADMIN = true;
-  adminBadge.classList.remove('hidden');
-  adminPanel.classList.add('hidden');
-  adminBtn.classList.add('hidden');
-  adminExit.classList.remove('hidden');
-  adminKeyInput.value = '';
-  reload();
-}
-function exitAdminMode() {
-  ADMIN = false;
-  localStorage.removeItem('yyx_admin');
-  adminBadge.classList.add('hidden');
-  adminBtn.classList.remove('hidden');
-  adminExit.classList.add('hidden');
-  reload();
-}
-async function adminUnlock() {
-  const key = adminKeyInput.value.trim();
-  if (!key) { showToast('请输入口令'); return; }
-  if (MODE === 'backend') {
-    try {
-      const res = await fetch('/api/admin/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });
-      if (!res.ok) { showToast('口令错误'); return; }
-    } catch (e) { showToast('验证失败'); return; }
-  }
-  localStorage.setItem('yyx_admin', key);
-  enterAdminMode();
-  showToast('已进入管理模式');
-}
-async function adminDeleteQuestion() {
-  if (!confirm('管理员操作：确定删除该问题及其全部回复？')) return;
-  try {
-    if (MODE === 'backend') {
-      const key = localStorage.getItem('yyx_admin') || '';
-      const res = await fetch('/api/admin/questions/' + QID, { method: 'DELETE', headers: { 'x-admin-key': key } });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || '删除失败'); }
-    } else {
-      setLocal(getLocal().filter((x) => x.id !== QID));
-    }
-    showToast('已删除'); setTimeout(() => { location.href = 'index.html'; }, 800);
-  } catch (e) { showToast(e.message || '删除失败'); }
-}
-async function adminDeleteReply(rid) {
-  if (!confirm('管理员操作：确定删除这条回复？')) return;
-  try {
-    if (MODE === 'backend') {
-      const key = localStorage.getItem('yyx_admin') || '';
-      const res = await fetch('/api/admin/replies/' + rid, { method: 'DELETE', headers: { 'x-admin-key': key } });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || '删除失败'); }
-    } else {
-      const arr = getLocal();
-      arr.forEach((q) => { if (q.replies) q.replies = q.replies.filter((r) => r.id !== rid); });
-      setLocal(arr);
-    }
-    showToast('已删除'); await reload();
-  } catch (e) { showToast(e.message || '删除失败'); }
-}
 
 // ---------- 模式 ----------
 async function detectMode() {
@@ -364,19 +299,12 @@ async function detectMode() {
   }
   if (!QID) { showToast('缺少问题 ID'); return; }
   await detectMode();
-  modeBadge.textContent = MODE === 'backend' ? '● 共享模式' : '● 本地模式';
-  modeBadge.className = 'mode-badge ' + (MODE === 'backend' ? 'online' : 'local');
   replyBtn.addEventListener('click', submitReply);
   replyInput.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') submitReply(); });
-  adminBtn.addEventListener('click', () => adminPanel.classList.toggle('hidden'));
-  adminUnlockBtn.addEventListener('click', adminUnlock);
-  adminExit.addEventListener('click', exitAdminMode);
-  adminKeyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') adminUnlock(); });
   loadAdmin();
   try {
     const data = await apiGetQuestion(QID);
     renderQuestion(data.question);
     renderReplies(data.replies || []);
-    if (ADMIN) { adminBadge.classList.remove('hidden'); adminBtn.classList.add('hidden'); adminExit.classList.remove('hidden'); }
   } catch (e) { showToast(e.message); }
 })();

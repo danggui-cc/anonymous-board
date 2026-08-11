@@ -22,18 +22,22 @@
             <span></span><span></span><span></span>
           </button>
           <div id="headerMenu" class="header-menu hidden">
-            <span id="adminBadge" class="admin-badge hidden">🛡 管理模式</span>
-            <button id="adminBtn" class="admin-btn">🛡 管理</button>
-            <div id="adminPanel" class="admin-panel hidden">
-              <input id="adminKeyInput" class="admin-input" type="password" placeholder="管理员口令" />
+            <div class="menu-item" id="menuNotif">
+              <span>消息通知</span>
+              <span id="notifBadge" class="notif-badge hidden">0</span>
+            </div>
+            <div id="notifPanel" class="notif-panel hidden"></div>
+            <div class="menu-item" id="menuMyQuestions">我的提问</div>
+            <div id="myQuestionsPanel" class="menu-sub-panel hidden"></div>
+            <div class="menu-item" id="menuMyReplies">我的留言</div>
+            <div id="myRepliesPanel" class="menu-sub-panel hidden"></div>
+            <div class="menu-divider"></div>
+            <div id="adminPanel" class="admin-panel-row locked">
+              <span class="admin-label">管理员口令</span>
+              <input id="adminKeyInput" class="admin-input" type="password" placeholder="输入口令" />
               <button id="adminUnlock" class="ghost-btn small">解锁</button>
               <button id="adminExit" class="ghost-btn small hidden">退出</button>
             </div>
-            <div class="notif-wrap">
-              <button id="notifBtn" class="notif-btn" title="消息通知">🔔<span id="notifBadge" class="notif-badge hidden">0</span></button>
-              <div id="notifPanel" class="notif-panel hidden"></div>
-            </div>
-            <span id="modeBadge" class="mode-badge">…</span>
           </div>
         </div>
       </div>

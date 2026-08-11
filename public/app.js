@@ -29,21 +29,23 @@ const modeBadge = $('#modeBadge');
 const toast = $('#toast');
 const sortTime = $('#sortTime');
 const sortHeat = $('#sortHeat');
-const adminBtn = $('#adminBtn');
 const adminPanel = $('#adminPanel');
 const adminKeyInput = $('#adminKeyInput');
 const adminUnlockBtn = $('#adminUnlock');
 const adminExit = $('#adminExit');
-const adminBadge = $('#adminBadge');
 const manageBox = $('#manageBox');
 const askOpenBtn = $('#askOpenBtn');
 const askModal = $('#askModal');
 const askCloseBtn = $('#askCloseBtn');
-const notifBtn = $('#notifBtn');
 const notifPanel = $('#notifPanel');
 const notifBadge = $('#notifBadge');
 const menuBtn = $('#menuBtn');
 const headerMenu = $('#headerMenu');
+const menuNotif = $('#menuNotif');
+const menuMyQuestions = $('#menuMyQuestions');
+const menuMyReplies = $('#menuMyReplies');
+const myQuestionsPanel = $('#myQuestionsPanel');
+const myRepliesPanel = $('#myRepliesPanel');
 
 // ---------- 存储 ----------
 function getTokens() { try { return JSON.parse(localStorage.getItem(TOKEN_KEY)) || {}; } catch (e) { return {}; } }
@@ -136,6 +138,71 @@ function renderNotifPanel(notifs, seen) {
   }).join('');
 }
 
+function renderMyQuestionsPanel(list) {
+  if (!list.length) {
+    myQuestionsPanel.innerHTML = '<div class="empty">你还没有提问<br>点击「＋ 我要提问」开始匿名提问 🌱</div>';
+    return;
+  }
+  myQuestionsPanel.innerHTML = list.map((q) => {
+    const title = q.title ? escapeHtml(q.title) : '（无标题）';
+    return '<a class="menu-row" href="question.html?id=' + encodeURIComponent(q.id) + '">' +
+      '<div class="row-title">' + title + '</div>' +
+      '<div class="row-meta">' + fmtDate(q.createdAt) + ' · 💬 ' + (q.replyCount || 0) + ' 回复</div>' +
+      '</a>';
+  }).join('');
+}
+
+async function renderMyQuestions() {
+  try {
+    const all = await apiList({ category: '全部', q: '' });
+    const owned = getOwned();
+    const mine = all.filter((q) => owned[q.id]?.type === 'question');
+    renderMyQuestionsPanel(mine);
+  } catch (e) {
+    myQuestionsPanel.innerHTML = '<div class="empty">加载失败，请重试</div>';
+  }
+}
+
+function renderMyRepliesPanel(items) {
+  if (!items.length) {
+    myRepliesPanel.innerHTML = '<div class="empty">你还没有留言<br>在问题详情页写下第一条回复吧 💬</div>';
+    return;
+  }
+  myRepliesPanel.innerHTML = items.map((it) => {
+    const snippet = (it.reply.content || '').slice(0, 80);
+    return '<a class="menu-row" href="question.html?id=' + encodeURIComponent(it.qid) + '#' + encodeURIComponent(it.reply.id) + '">' +
+      '<div class="row-title">《' + escapeHtml(it.qtitle || '（无标题）') + '》</div>' +
+      '<div class="row-snippet">' + escapeHtml(snippet) + '</div>' +
+      '<div class="row-meta">' + fmtDate(it.reply.createdAt) + '</div>' +
+      '</a>';
+  }).join('');
+}
+
+async function renderMyReplies() {
+  try {
+    const owned = getOwned();
+    const byQid = {};
+    Object.entries(owned).forEach(([id, info]) => {
+      if (info.type === 'reply' && info.questionId) {
+        (byQid[info.questionId] ||= []).push(id);
+      }
+    });
+    const items = [];
+    for (const [qid, rids] of Object.entries(byQid)) {
+      const d = await apiGetQuestionRaw(qid);
+      if (!d) continue;
+      rids.forEach((rid) => {
+        const r = (d.replies || []).find((x) => x.id === rid);
+        if (r) items.push({ qid, qtitle: d.question.title, reply: r });
+      });
+    }
+    items.sort((a, b) => b.reply.createdAt - a.reply.createdAt);
+    renderMyRepliesPanel(items);
+  } catch (e) {
+    myRepliesPanel.innerHTML = '<div class="empty">加载失败，请重试</div>';
+  }
+}
+
 async function refreshNotif() {
   const notifs = await computeNotifications();
   const seen = new Set(getSeen());
@@ -145,17 +212,33 @@ async function refreshNotif() {
   renderNotifPanel(notifs, seen);
 }
 
-notifBtn.addEventListener('click', (e) => {
+menuNotif.addEventListener('click', (e) => {
   e.stopPropagation();
   const willShow = notifPanel.classList.contains('hidden');
-  notifPanel.classList.toggle('hidden');
+  hideAllSubPanels();
   if (willShow) {
+    notifPanel.classList.remove('hidden');
     computeNotifications().then((notifs) => { markSeen(notifs.map((n) => n.replyId)); refreshNotif(); });
   }
 });
-document.addEventListener('click', (e) => {
-  if (!e.target.closest('.notif-wrap')) notifPanel.classList.add('hidden');
+menuMyQuestions.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const willShow = myQuestionsPanel.classList.contains('hidden');
+  hideAllSubPanels();
+  if (willShow) { myQuestionsPanel.classList.remove('hidden'); renderMyQuestions(); }
 });
+menuMyReplies.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const willShow = myRepliesPanel.classList.contains('hidden');
+  hideAllSubPanels();
+  if (willShow) { myRepliesPanel.classList.remove('hidden'); renderMyReplies(); }
+});
+
+function hideAllSubPanels() {
+  notifPanel.classList.add('hidden');
+  myQuestionsPanel.classList.add('hidden');
+  myRepliesPanel.classList.add('hidden');
+}
 
 // ---------- 汉堡菜单（收起管理/通知/模式标识）----------
 menuBtn.addEventListener('click', (e) => {
@@ -342,11 +425,6 @@ async function detectMode() {
   } catch (e) {}
   MODE = 'local';
 }
-function updateModeBadge() {
-  if (MODE === 'backend') { modeBadge.textContent = '● 共享模式'; modeBadge.className = 'mode-badge online'; }
-  else { modeBadge.textContent = '● 本地模式'; modeBadge.className = 'mode-badge local'; modeBadge.title = '未检测到后端，数据仅存于本浏览器。'; }
-}
-
 // ---------- 排序 ----------
 function setSort(s) {
   curSort = s;
@@ -372,19 +450,18 @@ function showManageBox(id, token) {
 function loadAdmin() { ADMIN = !!localStorage.getItem('yyx_admin'); }
 function enterAdminMode() {
   ADMIN = true;
-  adminBadge.classList.remove('hidden');
-  adminPanel.classList.add('hidden');
-  adminBtn.classList.add('hidden');
-  adminExit.classList.remove('hidden');
+  adminPanel.classList.remove('locked');
+  adminPanel.classList.add('unlocked');
+  adminPanel.querySelector('.admin-label').textContent = '管理模式';
   adminKeyInput.value = '';
   loadQuestions();
 }
 function exitAdminMode() {
   ADMIN = false;
   localStorage.removeItem('yyx_admin');
-  adminBadge.classList.add('hidden');
-  adminBtn.classList.remove('hidden');
-  adminExit.classList.add('hidden');
+  adminPanel.classList.remove('unlocked');
+  adminPanel.classList.add('locked');
+  adminPanel.querySelector('.admin-label').textContent = '管理员口令';
   loadQuestions();
 }
 async function adminUnlock() {
@@ -414,7 +491,6 @@ async function adminDeleteQuestion(id) {
     await loadQuestions();
   } catch (e) { showToast(e.message || '删除失败'); }
 }
-adminBtn.addEventListener('click', () => adminPanel.classList.toggle('hidden'));
 adminUnlockBtn.addEventListener('click', adminUnlock);
 adminExit.addEventListener('click', exitAdminMode);
 adminKeyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') adminUnlock(); });
@@ -428,8 +504,8 @@ questionList.addEventListener('click', (e) => {
   CATEGORIES.forEach((c) => { const o = document.createElement('option'); o.value = c; o.textContent = c; categoryInput.appendChild(o); });
   categoryInput.value = '其他';
   await detectMode();
-  updateModeBadge();
   renderCats();
+  adminPanel.classList.add('locked');
   loadAdmin();
   if (ADMIN) enterAdminMode();
   await loadQuestions();

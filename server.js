@@ -92,7 +92,12 @@ function serveStatic(req, res) {
       res.end('Not Found'); return;
     }
     const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+    // 前端 JS/CSS/HTML 每次部署都会变，不设缓存头会导致浏览器/CDN 启发式缓存、
+    // 前端更新不生效（表现为页面点了没反应）。no-cache 强制每次向服务器校验。
+    res.writeHead(200, {
+      'Content-Type': MIME[ext] || 'application/octet-stream',
+      'Cache-Control': 'no-cache',
+    });
     res.end(buf);
   });
 }

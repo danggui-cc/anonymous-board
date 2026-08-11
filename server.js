@@ -252,9 +252,20 @@ const server = http.createServer((req, res) => {
   serveStatic(req, res);
 });
 
-// 启动时确保集合存在（仅云数据库模式有效，失败不致命）
-store.init().catch(() => {}).finally(() => {
-  server.listen(PORT, () => {
-    console.log(`欲言信箱已启动: http://localhost:${PORT} (存储模式: ${store.mode})`);
-  });
+// 立刻监听端口：保证 CloudBase 健康检查探针能连上，pod 尽快就绪。
+// 关键：绝不能把 listen 放在 store.init() 之后——tcb 模式下建集合的网络
+// 调用可能挂起，会阻塞 listen 导致端口一直不监听、探针 connection refused。
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`欲言信箱已启动: http://localhost:${PORT} (存储模式: ${store.mode})`);
+  // 后台异步确保集合存在（失败仅警告，不影响服务）
+  store.init().catch((e) => console.warn('[warn] 初始化存储/集合失败（已忽略）:', e && e.message));
 });
+
+server.on('error', (err) => {
+  console.error('[fatal] 服务器监听失败:', err);
+  process.exit(1);
+});
+
+// 防止未捕获异常导致容器静默退出且无日志可查
+process.on('uncaughtException', (err) => console.error('[uncaughtException]', err));
+process.on('unhandledRejection', (err) => console.error('[unhandledRejection]', err));

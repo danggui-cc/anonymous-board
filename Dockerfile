@@ -23,6 +23,8 @@ COPY public ./public
 ENV PORT=3000
 ENV DATA_DIR=/data
 ENV NODE_ENV=production
+# 强制使用 CloudBase 云数据库，避免容器重启/重新部署后文件数据丢失
+ENV STORAGE=tcb
 
 # 创建数据目录并允许写入（部分云环境要求）
 RUN mkdir -p /data && chmod 777 /data

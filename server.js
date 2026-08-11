@@ -325,8 +325,12 @@ const server = http.createServer((req, res) => {
 // 调用可能挂起，会阻塞 listen 导致端口一直不监听、探针 connection refused。
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`欲言信箱已启动: http://localhost:${PORT} (存储模式: ${store.mode})`);
-  // 后台异步确保集合存在（失败仅警告，不影响服务）
-  store.init().catch((e) => console.warn('[warn] 初始化存储/集合失败（已忽略）:', e && e.message));
+  // 后台异步确保集合存在。
+  // 强制 tcb 模式下若连不上云数据库，说明数据会丢失，必须让服务退出以便用户排查。
+  store.init().catch((e) => {
+    console.error('[fatal] 存储初始化失败:', e && e.message);
+    process.exit(1);
+  });
 });
 
 server.on('error', (err) => {

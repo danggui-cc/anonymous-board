@@ -28,6 +28,10 @@ function detectMode() {
   return 'file';
 }
 const MODE = detectMode();
+// 用户是否显式指定了 STORAGE（env / Dockerfile）。
+// 显式指定 tcb 时，绝不降级到 file，避免数据写到临时容器里随重启丢失。
+const EXPLICIT_STORAGE = !!process.env.STORAGE;
+function allowFallback() { return !(MODE === 'tcb' && EXPLICIT_STORAGE); }
 
 // ---------------- 文件模式（本地兜底） ----------------
 function ensureStore() {
@@ -95,6 +99,10 @@ async function probeTcbHealth() {
     return true;
   } catch (e) {
     _tcbHealthy = false;
+    if (!allowFallback()) {
+      console.error('[storage] 显式配置 STORAGE=tcb，但云数据库探测失败:', e && e.message);
+      throw new Error('STORAGE=tcb 配置下无法连接 CloudBase 云数据库，请检查集合/权限/网络。错误：' + (e && e.message));
+    }
     console.warn('[storage] 云数据库探测失败，已降级为 file 模式（数据会写在容器内，重启丢失）:', e && e.message);
     return false;
   }
@@ -114,19 +122,17 @@ async function ensureCollections() {
   } catch (e) { /* 忽略，控制台手动创建亦可 */ }
 }
 
-// 当前实际生效的存储模式（探测后可能从 tcb 降级为 file）
+// 当前实际生效的存储模式
 function activeMode() {
   if (MODE !== 'tcb') return 'file';
-  return _tcbHealthy === true ? 'tcb' : 'file';
+  if (!EXPLICIT_STORAGE) return _tcbHealthy === true ? 'tcb' : 'file';
+  return 'tcb';
 }
 
 // ---------------- 统一存储接口 ----------------
 const store = {
-  // 返回当前实际/预期存储模式（探测失败前仍显示 tcb，失败后降级为 file）
-  get mode() {
-    if (MODE !== 'tcb') return 'file';
-    return _tcbHealthy === false ? 'file' : 'tcb';
-  },
+  // 返回当前实际生效的存储模式
+  get mode() { return activeMode(); },
 
   // 启动时可调用：确保集合存在（仅 tcb 模式有效，失败不致命）
   async init() { await ensureCollections(); },
@@ -138,9 +144,11 @@ const store = {
         const res = await withTimeout(db.collection('questions').limit(1000).get(), 10000, 'listQuestions');
         return res.data || [];
       } catch (e) {
-        console.warn('[storage] listQuestions tcb 失败，本次降级 file:', e && e.message);
+        console.warn('[storage] listQuestions tcb 失败:', e && e.message);
+        if (!allowFallback()) throw e;
       }
     }
+    if (!allowFallback()) throw new Error('当前强制使用 tcb 模式，但云数据库不可用');
     return readStore().questions.slice();
   },
 
@@ -151,9 +159,11 @@ const store = {
         const res = await withTimeout(db.collection('questions').doc(id).get(), 8000, 'getQuestion');
         return (res.data && res.data[0]) || null;
       } catch (e) {
-        console.warn('[storage] getQuestion tcb 失败，本次降级 file:', e && e.message);
+        console.warn('[storage] getQuestion tcb 失败:', e && e.message);
+        if (!allowFallback()) throw e;
       }
     }
+    if (!allowFallback()) throw new Error('当前强制使用 tcb 模式，但云数据库不可用');
     return readStore().questions.find((p) => p.id === id) || null;
   },
 
@@ -164,9 +174,11 @@ const store = {
         await withTimeout(db.collection('questions').doc(q.id).set(q), 8000, 'createQuestion');
         return q;
       } catch (e) {
-        console.warn('[storage] createQuestion tcb 失败，本次降级 file:', e && e.message);
+        console.warn('[storage] createQuestion tcb 失败:', e && e.message);
+        if (!allowFallback()) throw e;
       }
     }
+    if (!allowFallback()) throw new Error('当前强制使用 tcb 模式，但云数据库不可用');
     const s = readStore();
     s.questions.push(q);
     writeStore(s);
@@ -186,9 +198,11 @@ const store = {
         await withTimeout(db.collection('replies').where({ questionId: id }).remove(), 8000, 'deleteQuestion.removeReplies');
         return { ok: true };
       } catch (e) {
-        console.warn('[storage] deleteQuestion tcb 失败，本次降级 file:', e && e.message);
+        console.warn('[storage] deleteQuestion tcb 失败:', e && e.message);
+        if (!allowFallback()) throw e;
       }
     }
+    if (!allowFallback()) throw new Error('当前强制使用 tcb 模式，但云数据库不可用');
     const s = readStore();
     const idx = s.questions.findIndex((p) => p.id === id);
     if (idx === -1) return { ok: false, code: 404 };
@@ -209,9 +223,11 @@ const store = {
         await withTimeout(db.collection('replies').where({ questionId: id }).remove(), 8000, 'adminDeleteQuestion.removeReplies');
         return { ok: true };
       } catch (e) {
-        console.warn('[storage] adminDeleteQuestion tcb 失败，本次降级 file:', e && e.message);
+        console.warn('[storage] adminDeleteQuestion tcb 失败:', e && e.message);
+        if (!allowFallback()) throw e;
       }
     }
+    if (!allowFallback()) throw new Error('当前强制使用 tcb 模式，但云数据库不可用');
     const s = readStore();
     const idx = s.questions.findIndex((p) => p.id === id);
     if (idx === -1) return { ok: false, code: 404 };
@@ -231,9 +247,11 @@ const store = {
         await withTimeout(db.collection('questions').doc(id).update({ featured: !!val }), 8000, 'setFeatured.update');
         return { ok: true };
       } catch (e) {
-        console.warn('[storage] setFeatured tcb 失败，本次降级 file:', e && e.message);
+        console.warn('[storage] setFeatured tcb 失败:', e && e.message);
+        if (!allowFallback()) throw e;
       }
     }
+    if (!allowFallback()) throw new Error('当前强制使用 tcb 模式，但云数据库不可用');
     const s = readStore();
     const q = s.questions.find((p) => p.id === id);
     if (!q) return { ok: false, code: 404 };
@@ -249,9 +267,11 @@ const store = {
         const res = await withTimeout(db.collection('replies').where({ questionId }).get(), 8000, 'listReplies');
         return (res.data || []).sort((a, b) => a.createdAt - b.createdAt);
       } catch (e) {
-        console.warn('[storage] listReplies tcb 失败，本次降级 file:', e && e.message);
+        console.warn('[storage] listReplies tcb 失败:', e && e.message);
+        if (!allowFallback()) throw e;
       }
     }
+    if (!allowFallback()) throw new Error('当前强制使用 tcb 模式，但云数据库不可用');
     return readStore().replies
       .filter((r) => r.questionId === questionId)
       .sort((a, b) => a.createdAt - b.createdAt);
@@ -264,9 +284,11 @@ const store = {
         await withTimeout(db.collection('replies').doc(reply.id).set(reply), 8000, 'createReply');
         return reply;
       } catch (e) {
-        console.warn('[storage] createReply tcb 失败，本次降级 file:', e && e.message);
+        console.warn('[storage] createReply tcb 失败:', e && e.message);
+        if (!allowFallback()) throw e;
       }
     }
+    if (!allowFallback()) throw new Error('当前强制使用 tcb 模式，但云数据库不可用');
     const s = readStore();
     s.replies.push(reply);
     writeStore(s);
@@ -285,9 +307,11 @@ const store = {
         await withTimeout(db.collection('replies').doc(id).remove(), 8000, 'deleteReply.remove');
         return { ok: true };
       } catch (e) {
-        console.warn('[storage] deleteReply tcb 失败，本次降级 file:', e && e.message);
+        console.warn('[storage] deleteReply tcb 失败:', e && e.message);
+        if (!allowFallback()) throw e;
       }
     }
+    if (!allowFallback()) throw new Error('当前强制使用 tcb 模式，但云数据库不可用');
     const s = readStore();
     const idx = s.replies.findIndex((r) => r.id === id);
     if (idx === -1) return { ok: false, code: 404 };
@@ -306,9 +330,11 @@ const store = {
         await withTimeout(db.collection('replies').doc(id).remove(), 8000, 'adminDeleteReply.remove');
         return { ok: true };
       } catch (e) {
-        console.warn('[storage] adminDeleteReply tcb 失败，本次降级 file:', e && e.message);
+        console.warn('[storage] adminDeleteReply tcb 失败:', e && e.message);
+        if (!allowFallback()) throw e;
       }
     }
+    if (!allowFallback()) throw new Error('当前强制使用 tcb 模式，但云数据库不可用');
     const s = readStore();
     const idx = s.replies.findIndex((r) => r.id === id);
     if (idx === -1) return { ok: false, code: 404 };
@@ -327,9 +353,11 @@ const store = {
         (res.data || []).forEach((r) => { rc[r.questionId] = (rc[r.questionId] || 0) + 1; });
         return rc;
       } catch (e) {
-        console.warn('[storage] replyCounts tcb 失败，本次降级 file:', e && e.message);
+        console.warn('[storage] replyCounts tcb 失败:', e && e.message);
+        if (!allowFallback()) throw e;
       }
     }
+    if (!allowFallback()) throw new Error('当前强制使用 tcb 模式，但云数据库不可用');
     const s = readStore();
     const rc = {};
     s.replies.forEach((r) => { rc[r.questionId] = (rc[r.questionId] || 0) + 1; });
@@ -345,9 +373,11 @@ const store = {
         const res = await withTimeout(db.collection('replies').limit(1000).get(), 10000, 'listAllReplies');
         return res.data || [];
       } catch (e) {
-        console.warn('[storage] listAllReplies tcb 失败，本次降级 file:', e && e.message);
+        console.warn('[storage] listAllReplies tcb 失败:', e && e.message);
+        if (!allowFallback()) throw e;
       }
     }
+    if (!allowFallback()) throw new Error('当前强制使用 tcb 模式，但云数据库不可用');
     return readStore().replies.slice();
   },
 
@@ -360,8 +390,12 @@ const store = {
         if (res.data && res.data[0]) return { ok: true, existed: true };
         await withTimeout(db.collection('users').doc(user.id).set(user), 8000, 'createUser');
         return { ok: true, existed: false };
-      } catch (e) { console.warn('[storage] createUser tcb 失败:', e && e.message); }
+      } catch (e) {
+        console.warn('[storage] createUser tcb 失败:', e && e.message);
+        if (!allowFallback()) throw e;
+      }
     }
+    if (!allowFallback()) throw new Error('当前强制使用 tcb 模式，但云数据库不可用');
     const arr = readUsers();
     if (arr.find((u) => u.id === user.id)) return { ok: true, existed: true };
     arr.push(user); writeUsers(arr);
@@ -376,8 +410,12 @@ const store = {
         const res = await withTimeout(db.collection('users').doc(id).get(), 8000, 'getUserSalt');
         const u = res.data && res.data[0];
         return u ? u.salt : null;
-      } catch (e) { console.warn('[storage] getUserSalt tcb 失败:', e && e.message); }
+      } catch (e) {
+        console.warn('[storage] getUserSalt tcb 失败:', e && e.message);
+        if (!allowFallback()) throw e;
+      }
     }
+    if (!allowFallback()) throw new Error('当前强制使用 tcb 模式，但云数据库不可用');
     const u = readUsers().find((x) => x.id === id);
     return u ? u.salt : null;
   },
@@ -390,8 +428,12 @@ const store = {
         const res = await withTimeout(db.collection('users').doc(id).get(), 8000, 'verifyUser');
         const u = res.data && res.data[0];
         return !!(u && u.pwdHash === pwdHash);
-      } catch (e) { console.warn('[storage] verifyUser tcb 失败:', e && e.message); }
+      } catch (e) {
+        console.warn('[storage] verifyUser tcb 失败:', e && e.message);
+        if (!allowFallback()) throw e;
+      }
     }
+    if (!allowFallback()) throw new Error('当前强制使用 tcb 模式，但云数据库不可用');
     const u = readUsers().find((x) => x.id === id);
     return !!(u && u.pwdHash === pwdHash);
   },

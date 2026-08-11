@@ -129,10 +129,15 @@ body {
 .filter-all { position: relative; }
 .all-pill {
   display: inline-flex; align-items: center; gap: 6px;
-  background: var(--brand); color: #fff; border: none; padding: 8px 14px;
-  border-radius: 999px; font-size: 13px; font-weight: 600; cursor: pointer;
+  background: #fff; color: var(--muted); border: 1px solid var(--line);
+  padding: 7px 14px; border-radius: 999px; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: all .15s;
 }
-.all-pill .caret { font-size: 10px; opacity: .85; }
+.all-pill:hover { border-color: var(--brand-2); color: var(--brand); }
+.all-pill.has-value { background: var(--brand); color: #fff; border-color: var(--brand); }
+.all-pill.has-value:hover { color: #fff; }
+.all-pill .caret { font-size: 10px; opacity: .85; transition: transform .2s; }
+.all-pill.open .caret { transform: rotate(180deg); }
 .cat-dropdown {
   position: absolute; top: calc(100% + 8px); left: 0; z-index: 50;
   background: #fff; border: 1px solid var(--line); border-radius: 14px;
@@ -145,7 +150,6 @@ body {
   padding: 8px 10px; border-radius: 10px; font-size: 13px; cursor: pointer; text-align: left;
 }
 .cat-dropdown button:hover { background: #d4e8dc; }
-.cat-dropdown button.active { background: var(--brand); color: #fff; }
 .pill {
   border: 1px solid var(--line); background: #fff; color: var(--muted);
   padding: 7px 14px; border-radius: 999px; font-size: 13px; cursor: pointer; white-space: nowrap;

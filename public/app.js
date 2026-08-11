@@ -219,25 +219,42 @@ async function loadQuestions() {
 
 // ---------- 分类筛选 UI ----------
 function renderCats() {
-  // 下拉
+  // 下拉：选项内部不再用颜色区分选中态，统一浅色
   catDropdown.innerHTML = '';
   ['全部', ...CATEGORIES].forEach((c) => {
     const b = document.createElement('button');
     b.textContent = c;
-    if (c === curCat) b.classList.add('active');
-    b.addEventListener('click', () => { setCategory(c); catDropdown.classList.add('hidden'); });
+    b.addEventListener('click', () => { setCategory(c); });
     catDropdown.appendChild(b);
   });
+}
+function updateAllBtn() {
+  // 按钮显示当前选中的分类名；非“全部”时整体变深色高亮
+  allBtn.innerHTML = `${escapeHtml(curCat)} <span class="caret">▾</span>`;
+  allBtn.classList.toggle('has-value', curCat !== '全部');
+}
+function openCatDropdown() {
+  catDropdown.classList.remove('hidden');
+  allBtn.classList.add('open');
+}
+function closeCatDropdown() {
+  catDropdown.classList.add('hidden');
+  allBtn.classList.remove('open');
+}
+function toggleCatDropdown() {
+  if (catDropdown.classList.contains('hidden')) openCatDropdown();
+  else closeCatDropdown();
 }
 function setCategory(c) {
   curCat = c;
   if (curFeatured) { curFeatured = false; featuredBtn.classList.remove('active'); }
-  renderCats();
+  closeCatDropdown();
+  updateAllBtn();
   loadQuestions();
 }
-allBtn.addEventListener('click', () => catDropdown.classList.toggle('hidden'));
+allBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleCatDropdown(); });
 document.addEventListener('click', (e) => {
-  if (!e.target.closest('.filter-all')) catDropdown.classList.add('hidden');
+  if (!e.target.closest('.filter-all')) closeCatDropdown();
 });
 
 // ---------- 精选筛选 ----------
@@ -442,6 +459,7 @@ questionList.addEventListener('click', (e) => {
   YuyanIdentity.getOrCreateUid();
   await detectMode();
   renderCats();
+  updateAllBtn();
   if (adminPanel) adminPanel.classList.add('locked');
   loadAdmin();
   if (ADMIN) enterAdminMode();

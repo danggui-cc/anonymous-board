@@ -22,8 +22,6 @@ const myQuestionsList = $('#myQuestionsList');
 const myRepliesList = $('#myRepliesList');
 const uidValue = $('#uidValue');
 const uidCopy = $('#uidCopy');
-const setPwdBtn = $('#setPwdBtn');
-const recoverBtn = $('#recoverBtn');
 const setPwdPanel = $('#setPwdPanel');
 const setPwdInput = $('#setPwdInput');
 const setPwdConfirm = $('#setPwdConfirm');
@@ -282,12 +280,6 @@ function initIdentityUI() {
 
 uidCopy.addEventListener('click', () => copyText(YuyanIdentity.getUid(), '已复制身份 ID'));
 
-setPwdBtn.addEventListener('click', () => {
-  setPwdPanel.classList.toggle('hidden');
-  recoverPanel.classList.add('hidden');
-  identityMsg.textContent = '';
-  if (!setPwdPanel.classList.contains('hidden')) setPwdInput.focus();
-});
 setPwdConfirm.addEventListener('click', async () => {
   const pw = setPwdInput.value;
   if (!pw || pw.length < 4) { identityMsg.textContent = '密码至少 4 位'; identityMsg.className = 'identity-msg err'; return; }
@@ -299,19 +291,13 @@ setPwdConfirm.addEventListener('click', async () => {
     const res = await fetch('/api/account/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: uid, salt, pwdHash }) });
     const d = await res.json().catch(() => ({}));
     if (!res.ok) { identityMsg.textContent = d.error || '设置失败'; identityMsg.className = 'identity-msg err'; return; }
-    identityMsg.textContent = '已设置密码，换设备可用「恢复身份」找回 ✅'; identityMsg.className = 'identity-msg ok';
-    setPwdInput.value = ''; setPwdPanel.classList.add('hidden');
+    identityMsg.textContent = '已设置密码，换设备可用下方「恢复身份」找回 ✅'; identityMsg.className = 'identity-msg ok';
+    setPwdInput.value = '';
     showToast('密码已设置');
   } catch (e) { identityMsg.textContent = '网络错误，请重试'; identityMsg.className = 'identity-msg err'; }
   finally { setPwdConfirm.disabled = false; }
 });
 
-recoverBtn.addEventListener('click', () => {
-  recoverPanel.classList.toggle('hidden');
-  setPwdPanel.classList.add('hidden');
-  identityMsg.textContent = '';
-  if (!recoverPanel.classList.contains('hidden')) recUidInput.focus();
-});
 recConfirm.addEventListener('click', async () => {
   const uid = recUidInput.value.trim();
   const pw = recPwdInput.value;
@@ -327,7 +313,7 @@ recConfirm.addEventListener('click', async () => {
     YuyanIdentity.setUid(uid);
     uidValue.textContent = uid;
     identityMsg.textContent = '已恢复身份，现在「我的提问 / 我的留言」包含这台设备找回的内容 ✅'; identityMsg.className = 'identity-msg ok';
-    recoverPanel.classList.add('hidden'); recUidInput.value = ''; recPwdInput.value = '';
+    recUidInput.value = ''; recPwdInput.value = '';
     showToast('身份已恢复');
   } catch (e) { identityMsg.textContent = '网络错误，请重试'; identityMsg.className = 'identity-msg err'; }
   finally { recConfirm.disabled = false; }

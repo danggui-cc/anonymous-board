@@ -1,0 +1,5 @@
+#!/bin/bash
+# 腾讯云 SCF Web 函数启动文件
+# Web 函数要求服务监听 0.0.0.0:9000
+export PORT=9000
+npm run start

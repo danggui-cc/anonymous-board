@@ -1,8 +1,8 @@
 'use strict';
 
 const CATEGORIES = [
-  '内核探寻', '审美与灵感', '创作流与技艺', '定价与价值感',
-  '沟通与边界', '运营与系统', '能量与身心养护', '其他',
+  '自我认知与内核', '表达与创作', '关系与沟通',
+  '价值与回报', '课程事务与其他',
 ];
 const TOKEN_KEY = 'yyx_tokens';
 const LOCAL_KEY = 'yyx_local';
@@ -65,7 +65,7 @@ function markSeen(ids) { const s = new Set(getSeen()); ids.forEach((i) => s.add(
 
 async function detectMode() {
   try {
-    const res = await fetch('/api/questions');
+    const res = await fetch(API_BASE + '/api/questions');
     if (res.ok) { const d = await res.json(); if (Array.isArray(d.questions)) { MODE = 'backend'; return; } }
   } catch (e) {}
   MODE = 'local';
@@ -73,7 +73,7 @@ async function detectMode() {
 
 async function apiGetQuestionRaw(id) {
   if (MODE === 'backend') {
-    try { const res = await fetch('/api/questions/' + id); if (!res.ok) return null; return res.json(); }
+    try { const res = await fetch(API_BASE + '/api/questions/' + id); if (!res.ok) return null; return res.json(); }
     catch (e) { return null; }
   }
   const q = getLocal().find((x) => x.id === id);
@@ -87,7 +87,7 @@ async function apiList({ category, q, sort }) {
     if (category && category !== '全部') p.set('category', category);
     if (q) p.set('q', q);
     p.set('sort', sort || 'time');
-    const res = await fetch('/api/questions?' + p.toString());
+    const res = await fetch(API_BASE + '/api/questions?' + p.toString());
     const d = await res.json();
     return d.questions || [];
   }
@@ -186,7 +186,7 @@ async function renderMyQuestions() {
       const uid = YuyanIdentity.getUid();
       if (uid) {
         try {
-          const res = await fetch('/api/me/questions?ownerId=' + encodeURIComponent(uid));
+          const res = await fetch(API_BASE + '/api/me/questions?ownerId=' + encodeURIComponent(uid));
           if (res.ok) { const d = await res.json(); serverMine = d.questions || []; }
         } catch (e) {}
       }
@@ -239,7 +239,7 @@ async function renderMyReplies() {
       const uid = YuyanIdentity.getUid();
       if (uid) {
         try {
-          const res = await fetch('/api/me/replies?ownerId=' + encodeURIComponent(uid));
+          const res = await fetch(API_BASE + '/api/me/replies?ownerId=' + encodeURIComponent(uid));
           if (res.ok) {
             const d = await res.json();
             const replies = d.replies || [];
@@ -288,7 +288,7 @@ setPwdConfirm.addEventListener('click', async () => {
   const pwdHash = await hashPassword(pw, salt);
   setPwdConfirm.disabled = true;
   try {
-    const res = await fetch('/api/account/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: uid, salt, pwdHash }) });
+    const res = await fetch(API_BASE + '/api/account/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: uid, salt, pwdHash }) });
     const d = await res.json().catch(() => ({}));
     if (!res.ok) { identityMsg.textContent = d.error || '设置失败'; identityMsg.className = 'identity-msg err'; return; }
     identityMsg.textContent = '已设置密码，换设备可用下方「恢复身份」找回 ✅'; identityMsg.className = 'identity-msg ok';
@@ -304,11 +304,11 @@ recConfirm.addEventListener('click', async () => {
   if (!uid || !pw) { identityMsg.textContent = '请填写身份 ID 与密码'; identityMsg.className = 'identity-msg err'; return; }
   recConfirm.disabled = true;
   try {
-    const r1 = await fetch('/api/account/salt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: uid }) });
+    const r1 = await fetch(API_BASE + '/api/account/salt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: uid }) });
     if (!r1.ok) { const d = await r1.json().catch(() => ({})); identityMsg.textContent = d.error || '该身份 ID 不存在'; identityMsg.className = 'identity-msg err'; return; }
     const d1 = await r1.json();
     const pwdHash = await hashPassword(pw, d1.salt);
-    const r2 = await fetch('/api/account/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: uid, pwdHash }) });
+    const r2 = await fetch(API_BASE + '/api/account/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: uid, pwdHash }) });
     if (!r2.ok) { identityMsg.textContent = '身份 ID 或密码不正确'; identityMsg.className = 'identity-msg err'; return; }
     YuyanIdentity.setUid(uid);
     uidValue.textContent = uid;
@@ -344,7 +344,7 @@ async function adminUnlock() {
   if (!key) { showToast('请输入口令'); return; }
   if (MODE === 'backend') {
     try {
-      const res = await fetch('/api/admin/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });
+      const res = await fetch(API_BASE + '/api/admin/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });
       if (!res.ok) { showToast('口令错误'); return; }
     } catch (e) { showToast('验证失败'); return; }
   }

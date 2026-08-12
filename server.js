@@ -25,11 +25,11 @@ const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 const CATEGORIES = [
-  '内核探寻', '审美与灵感', '创作流与技艺', '定价与价值感',
-  '沟通与边界', '运营与系统', '能量与身心养护', '其他',
+  '自我认知与内核', '表达与创作', '关系与沟通',
+  '价值与回报', '课程事务与其他',
 ];
 
-const MAX_TITLE = 80;
+const MAX_TITLE = 15;
 const MAX_CONTENT = 4000;
 
 // 管理员口令：部署时通过环境变量 ADMIN_KEY 覆盖，用于清理违规内容
@@ -40,6 +40,7 @@ function sendJSON(res, status, obj) {
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
+    'Content-Disposition': 'inline',
   });
   res.end(JSON.stringify(obj));
 }
@@ -94,9 +95,12 @@ function serveStatic(req, res) {
     const ext = path.extname(filePath).toLowerCase();
     // 前端 JS/CSS/HTML 每次部署都会变，不设缓存头会导致浏览器/CDN 启发式缓存、
     // 前端更新不生效（表现为页面点了没反应）。no-cache 强制每次向服务器校验。
+    // 显式 inline：覆盖 SCF Web 函数网关默认注入的 content-disposition: attachment，
+    // 否则浏览器会把 HTML/JSON 当附件下载而不是渲染/展示。
     res.writeHead(200, {
       'Content-Type': MIME[ext] || 'application/octet-stream',
       'Cache-Control': 'no-cache',
+      'Content-Disposition': 'inline',
     });
     res.end(buf);
   });
@@ -156,9 +160,9 @@ async function handleApi(req, res, url) {
     let body; try { body = await readBody(req); } catch (e) { return sendJSON(res, 400, { error: '请求格式错误' }); }
     const content = (body.content || '').toString().trim();
     const title = (body.title || '').toString().trim();
-    let category = (body.category || '其他').toString().trim();
+    let category = (body.category || '课程事务与其他').toString().trim();
     if (!content) return sendJSON(res, 400, { error: '内容不能为空' });
-    if (!inCategories(category)) category = '其他';
+    if (!inCategories(category)) category = '课程事务与其他';
     const post = {
       id: makeId(),
       title: clip(title, MAX_TITLE),
@@ -327,6 +331,17 @@ async function handleApi(req, res, url) {
 
 // ---------- 服务器 ----------
 const server = http.createServer((req, res) => {
+  // CORS：允许前端部署在任意静态托管（GitHub Pages / EdgeOne Pages / 本地 file://）
+  // 通过 fetch 调用本 SCF 后端。SCF Web 函数网关会强制给响应加
+  // Content-Disposition: attachment，导致浏览器直接打开 URL 时下载而非渲染；
+  // 但 attachment 头不影响 fetch（仅影响顶级导航），因此前端独立托管 + fetch 调接口
+  // 即可彻底规避下载 bug，且无需备案。
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-admin-key, x-delete-token');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   if (url.pathname.startsWith('/api/')) {
     handleApi(req, res, url).catch(() => sendJSON(res, 500, { error: '服务器错误' }));

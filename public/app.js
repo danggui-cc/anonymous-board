@@ -1,9 +1,18 @@
 'use strict';
 
 const CATEGORIES = [
-  '内核探寻', '审美与灵感', '创作流与技艺', '定价与价值感',
-  '沟通与边界', '运营与系统', '能量与身心养护', '其他',
+  '自我认知与内核', '表达与创作', '关系与沟通',
+  '价值与回报', '课程事务与其他',
 ];
+// 每个话题对应的占位提示语；未选择话题时显示 DEFAULT_PLACEHOLDER
+const TOPIC_HINTS = {
+  '自我认知与内核': '我是谁？我在成为谁？——所有答案都在你心里…',
+  '表达与创作': '让内在的声音，找到属于它的出口…',
+  '关系与沟通': '和他人的每一次连接，都是看见自己的镜子…',
+  '价值与回报': '不只是钱，还有被看见、被需要、被认可…',
+  '课程事务与其他': '课程相关的一切，或暂时找不到分类的悄悄话…',
+};
+const DEFAULT_PLACEHOLDER = '选一个话题吧，它会帮你找到更懂你的人…';
 const TOKEN_KEY = 'yyx_tokens';
 const LOCAL_KEY = 'yyx_local'; // 本地模式：[{id,title,content,category,createdAt,deleteToken,replies:[{id,content,createdAt,deleteToken}]}]
 
@@ -75,7 +84,7 @@ function markSeen(ids) { const s = new Set(getSeen()); ids.forEach((i) => s.add(
 
 async function apiGetQuestionRaw(id) {
   if (MODE === 'backend') {
-    try { const res = await fetch('/api/questions/' + id); if (!res.ok) return null; return res.json(); }
+    try { const res = await fetch(API_BASE + '/api/questions/' + id); if (!res.ok) return null; return res.json(); }
     catch (e) { return null; }
   }
   const q = getLocal().find((x) => x.id === id);
@@ -132,7 +141,7 @@ async function apiList({ category, q, featured }) {
     if (q) p.set('q', q);
     if (featured) p.set('featured', '1');
     p.set('sort', curSort);
-    const res = await fetch('/api/questions?' + p.toString());
+    const res = await fetch(API_BASE + '/api/questions?' + p.toString());
     const d = await res.json();
     return d.questions || [];
   }
@@ -153,7 +162,7 @@ async function apiList({ category, q, featured }) {
 async function apiCreateQuestion({ title, content, category, author }) {
   const ownerId = YuyanIdentity.getUid();
   if (MODE === 'backend') {
-    const res = await fetch('/api/questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, content, category, author, ownerId }) });
+    const res = await fetch(API_BASE + '/api/questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, content, category, author, ownerId }) });
     const d = await res.json();
     if (!res.ok) throw new Error(d.error || '提交失败');
     return d;
@@ -166,7 +175,7 @@ async function apiCreateQuestion({ title, content, category, author }) {
 
 async function apiDeleteQuestion(id, token) {
   if (MODE === 'backend') {
-    const res = await fetch('/api/questions/' + id, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+    const res = await fetch(API_BASE + '/api/questions/' + id, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
     const d = await res.json(); if (!res.ok) throw new Error(d.error || '删除失败'); return true;
   }
   setLocal(getLocal().filter((x) => x.id !== id)); return true;
@@ -325,6 +334,8 @@ document.addEventListener('click', (e) => {
 // ---------- 提问弹窗 ----------
 function openAskModal() {
   composerMsg.textContent = '';
+  categoryInput.value = '';
+  applyTopicPlaceholder();
   askModal.classList.remove('hidden');
   askModal.setAttribute('aria-hidden', 'false');
   updateCharCount();
@@ -334,6 +345,14 @@ function closeAskModal() {
   askModal.classList.add('hidden');
   askModal.setAttribute('aria-hidden', 'true');
 }
+// ---------- 话题占位提示切换 ----------
+// 未选话题（选择框显示“话题”）→ 显示默认提示；选中具体话题 → 切换为该话题提示；
+// 重新选回“话题”或弹窗重置 → 恢复默认提示。
+function applyTopicPlaceholder() {
+  const cat = categoryInput.value;
+  contentInput.placeholder = cat ? (TOPIC_HINTS[cat] || DEFAULT_PLACEHOLDER) : DEFAULT_PLACEHOLDER;
+}
+categoryInput.addEventListener('change', applyTopicPlaceholder);
 askOpenBtn.addEventListener('click', openAskModal);
 askCloseBtn.addEventListener('click', closeAskModal);
 askModal.addEventListener('click', (e) => { if (e.target.dataset.close) closeAskModal(); });
@@ -346,7 +365,7 @@ async function submitQuestion() {
   postBtn.disabled = true; composerMsg.textContent = '';
   try {
     const me = YuyanIdentity.genIdentity();
-    const d = await apiCreateQuestion({ title: titleInput.value.trim(), content, category: categoryInput.value, author: me });
+    const d = await apiCreateQuestion({ title: titleInput.value.trim(), content, category: categoryInput.value || '课程事务与其他', author: me });
     setToken(d.id, d.deleteToken);
     YuyanIdentity.setVisitor(d.id, me); // 同一问题下本人身份保持一致
     setOwned(d.id, { type: 'question' });
@@ -377,7 +396,7 @@ contentInput.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) &
 // ---------- 模式 ----------
 async function detectMode() {
   try {
-    const res = await fetch('/api/questions');
+    const res = await fetch(API_BASE + '/api/questions');
     if (res.ok) { const d = await res.json(); if (Array.isArray(d.questions)) { MODE = 'backend'; return; } }
   } catch (e) {}
   MODE = 'local';
@@ -421,7 +440,7 @@ async function adminUnlock() {
   if (!key) { showToast('请输入口令'); return; }
   if (MODE === 'backend') {
     try {
-      const res = await fetch('/api/admin/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });
+      const res = await fetch(API_BASE + '/api/admin/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) });
       if (!res.ok) { showToast('口令错误'); return; }
     } catch (e) { showToast('验证失败'); return; }
   }
@@ -434,7 +453,7 @@ async function adminDeleteQuestion(id) {
   try {
     if (MODE === 'backend') {
       const key = localStorage.getItem('yyx_admin') || '';
-      const res = await fetch('/api/admin/questions/' + id, { method: 'DELETE', headers: { 'x-admin-key': key } });
+      const res = await fetch(API_BASE + '/api/admin/questions/' + id, { method: 'DELETE', headers: { 'x-admin-key': key } });
       if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || '删除失败'); }
     } else {
       setLocal(getLocal().filter((x) => x.id !== id));
@@ -446,7 +465,7 @@ async function adminDeleteQuestion(id) {
 async function apiSetFeatured(id, val) {
   if (MODE === 'backend') {
     const key = localStorage.getItem('yyx_admin') || '';
-    const res = await fetch('/api/admin/questions/' + id, {
+    const res = await fetch(API_BASE + '/api/admin/questions/' + id, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'x-admin-key': key },
       body: JSON.stringify({ featured: val }),
@@ -472,8 +491,10 @@ questionList.addEventListener('click', (e) => {
 
 // ---------- 启动 ----------
 (async function start() {
+  const ph = document.createElement('option'); ph.value = ''; ph.textContent = '话题'; categoryInput.appendChild(ph);
   CATEGORIES.forEach((c) => { const o = document.createElement('option'); o.value = c; o.textContent = c; categoryInput.appendChild(o); });
-  categoryInput.value = '其他';
+  categoryInput.value = '';
+  applyTopicPlaceholder();
   YuyanIdentity.getOrCreateUid();
   await detectMode();
   renderCats();

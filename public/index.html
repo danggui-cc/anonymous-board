@@ -47,8 +47,8 @@
           </div>
           <button id="askCloseBtn" class="modal-close" title="关闭">✕</button>
         </div>
-        <input id="titleInput" class="title-input" type="text" maxlength="80" placeholder="一句话概括你的问题（标题，可选）" />
-        <textarea id="contentInput" class="content-input" maxlength="2000" rows="4" placeholder="把你的想法、困惑、感受都写下来吧...这里只有温暖的倾听者。"></textarea>
+        <input id="titleInput" class="title-input" type="text" maxlength="15" placeholder="一句话概括你的问题（标题，可选）" />
+        <textarea id="contentInput" class="content-input" maxlength="2000" rows="4" placeholder="选一个话题吧，它会帮你找到更懂你的人…"></textarea>
         <div class="composer-foot">
           <div class="select-wrap">
             <select id="categoryInput" class="category-select"></select>
@@ -97,6 +97,7 @@
 
   <div id="adminMenu" class="admin-menu hidden"></div>
   <div id="toast" class="toast hidden"></div>
+  <script>window.API_BASE = 'https://1341046552-e0dvq4j6et.ap-guangzhou.tencentscf.com';</script>
   <script src="icons.js"></script>
   <script src="identity.js"></script>
   <script src="app.js"></script>
